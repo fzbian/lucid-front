@@ -1,0 +1,11 @@
+{
+  "short_name": "ATM",
+  "name": "ATM Ricky Rich",
+  "icons": [
+    { "src": "atm.png", "type": "image/png", "sizes": "192x192" }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#000000"
+}

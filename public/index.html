@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+  <link rel="icon" href="%PUBLIC_URL%/favicon.svg" type="image/svg+xml" />
+  <link rel="alternate icon" href="%PUBLIC_URL%/atm.png" type="image/png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="Web site created using create-react-app"
+    />
+  <!-- apple-touch-icon opcional eliminado para aligerar assets -->
+    <!--
+      manifest.json provides metadata used when your web app is installed on a
+      user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
+    -->
+  <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <!--
+      Notice the use of %PUBLIC_URL% in the tags above.
+      It will be replaced with the URL of the `public` folder during the build.
+      Only files inside the `public` folder can be referenced from the HTML.
+
+      Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
+      work correctly both with client-side routing and a non-root public URL.
+      Learn how to configure a non-root public URL by running `npm run build`.
+    -->
+  <!-- TailwindCSS y fuentes -->
+  <link crossorigin href="https://fonts.gstatic.com/" rel="preconnect" />
+  <link as="style" href="https://fonts.googleapis.com/css2?display=swap&amp;family=Manrope:wght@400;500;700;800&amp;family=Noto+Sans:wght@400;500;700;900" onload="this.rel='stylesheet'" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <title>ATM Ricky Rich</title>
+  <script>
+    // Genera un favicon PNG con esquinas redondeadas desde atm.png (compatibilidad amplia)
+    (function () {
+      try {
+        var src = '%PUBLIC_URL%/atm.png';
+        var targetSize = 32; // favicon típico
+        var radius = 6; // radio de esquina en px para 32x32
+        var img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function () {
+          try {
+            var canvas = document.createElement('canvas');
+            canvas.width = targetSize; canvas.height = targetSize;
+            var ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, targetSize, targetSize);
+            // Path con esquinas redondeadas
+            var r = Math.min(radius, targetSize / 2);
+            ctx.beginPath();
+            var x = 0, y = 0, w = targetSize, h = targetSize;
+            ctx.moveTo(x + r, y);
+            ctx.arcTo(x + w, y, x + w, y + h, r);
+            ctx.arcTo(x + w, y + h, x, y + h, r);
+            ctx.arcTo(x, y + h, x, y, r);
+            ctx.arcTo(x, y, x + w, y, r);
+            ctx.closePath();
+            ctx.clip();
+            // Dibujar imagen con cover
+            var iw = img.naturalWidth || img.width;
+            var ih = img.naturalHeight || img.height;
+            var scale = Math.max(w / iw, h / ih);
+            var dw = iw * scale, dh = ih * scale;
+            var dx = (w - dw) / 2, dy = (h - dh) / 2;
+            ctx.drawImage(img, dx, dy, dw, dh);
+            var url = canvas.toDataURL('image/png');
+            applyFavicon(url);
+          } catch (e) {
+            applyFavicon(src);
+          }
+        };
+        img.onerror = function () { applyFavicon(src); };
+        img.src = src;
+        function applyFavicon(href) {
+          var el = document.querySelector('link[rel="icon"]');
+          if (!el) {
+            el = document.createElement('link');
+            el.rel = 'icon';
+            document.head.appendChild(el);
+          }
+          el.type = 'image/png';
+          el.href = href;
+        }
+      } catch (_) { /* noop */ }
+    })();
+  </script>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <!--
+      This HTML file is a template.
+      If you open it directly in the browser, you will see an empty page.
+
+      You can add webfonts, meta tags, or analytics to this file.
+      The build step will place the bundled scripts into the <body> tag.
+
+      To begin the development, run `npm start` or `yarn start`.
+      To create a production bundle, use `npm run build` or `yarn build`.
+    -->
+  </body>
+</html>

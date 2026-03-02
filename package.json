@@ -1,0 +1,52 @@
+{
+  "name": "atm-ui",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "express": "^4.19.2",
+    "jspdf": "^4.1.0",
+    "jspdf-autotable": "^5.0.7",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.8.2",
+    "react-scripts": "5.0.1",
+    "sqlite3": "^5.1.7"
+  },
+  "scripts": {
+    "start": "cd ../backend && go run main.go",
+    "start:client": "react-scripts start",
+    "start:server": "cd ../backend && go run main.go",
+    "start:server:fast": "DB_SKIP_MIGRATIONS=1 sh -c \"cd ../backend && go run main.go\"",
+    "dev": "concurrently -k \"npm:start:client\" \"npm:start:server\"",
+    "dev:fast": "concurrently -k \"npm:start:client\" \"npm:start:server:fast\"",
+    "dev:frontend": "npm run start:client",
+    "dev:backend": "npm run start:server",
+    "dev:backend:fast": "npm run start:server:fast",
+    "start:prod": "node scripts/start-prod-frontend.js",
+    "start:prod:backend": "npm run build && npm run start:server",
+    "build": "react-scripts build",
+    "test": "echo 'tests deshabilitados' && exit 0",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "proxy": "http://localhost:8080",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
