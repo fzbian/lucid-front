@@ -23,6 +23,15 @@ const STEPS_DAILY = [
     { id: 3, title: 'Resumen', icon: 'receipt_long' },
 ];
 
+const STEPS_HOURLY = [
+    { id: 1, title: 'Horas Trabajadas', icon: 'schedule' },
+    { id: 2, title: 'Auxilio Transporte', icon: 'local_shipping' },
+    { id: 3, title: 'Adelantos', icon: 'money_off' },
+    { id: 4, title: 'Seguridad Social', icon: 'health_and_safety' },
+    { id: 5, title: 'Ajustes', icon: 'tune' },
+    { id: 6, title: 'Resumen', icon: 'receipt_long' },
+];
+
 export default function PayrollWizard({ isOpen, onClose, employee, config, onConfirm, initialDates, billingConfirmed = false, periodNum = 1, hasCommission = false }) {
     const { notify } = useNotifications();
     const [currentStep, setCurrentStep] = useState(1);
@@ -31,16 +40,21 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
     // Pay type from employee payroll
     const payType = employee?.payroll?.pay_type || 'fixed';
     const isDaily = payType === 'daily';
-    const STEPS = isDaily ? STEPS_DAILY : STEPS_FIXED;
+    const isHourly = payType === 'madrugones';
+    const isFixed = !isDaily && !isHourly;
+    const STEPS = isDaily ? STEPS_DAILY : (isHourly ? STEPS_HOURLY : STEPS_FIXED);
 
     // Global State
     const [period, setPeriod] = useState({ start: '', end: '' });
     const [baseSalary, setBaseSalary] = useState(0);
     const [dailyRate, setDailyRate] = useState(0);
+    const [hourlyRate, setHourlyRate] = useState(0);
     const [isEditingBase, setIsEditingBase] = useState(false);
     const [tempBaseSalary, setTempBaseSalary] = useState(0);
     const [tempDailyRate, setTempDailyRate] = useState(0);
+    const [tempHourlyRate, setTempHourlyRate] = useState(0);
     const [daysWorked, setDaysWorked] = useState(15);
+    const [hoursWorkedInput, setHoursWorkedInput] = useState('0');
 
     // Calendar selection for daily employees
     const [selectedDays, setSelectedDays] = useState([]);
@@ -99,10 +113,13 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
         if (isOpen && employee) {
             const currentSalary = employee.payroll?.base_salary || 0;
             const currentDailyRate = employee.payroll?.daily_rate || 0;
+            const currentHourlyRate = employee.payroll?.hourly_rate || 0;
             setBaseSalary(currentSalary);
             setDailyRate(currentDailyRate);
+            setHourlyRate(currentHourlyRate);
             setTempBaseSalary(currentSalary);
             setTempDailyRate(currentDailyRate);
+            setTempHourlyRate(currentHourlyRate);
             setIsEditingBase(false);
 
             // Determine Sunday Value based on Period Month
@@ -133,13 +150,22 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
             setSundayValue(sv);
             setTempSundayValue(sv);
             setIsEditingSundayValue(false);
+            setSundaysMode('manual');
+            setSundaysManualQty(0);
+            setSundaysOdooPos(null);
+            setSundaysOdooSessions([]);
             setMadrugonValue(config?.valor_madrugon || 10000);
             setTempMadrugonValue(config?.valor_madrugon || 10000);
             setIsEditingMadrugonValue(false);
+            setMadrugonesMode('none');
+            setMadrugonesManualQty(0);
+            setMadrugonesOdooPos(null);
+            setMadrugonesOdooSessions([]);
             setAdvance(0);
             setAdvanceMode('none');
             setIncludesTransportAid(!isDaily);
             setSelectedDays([]);
+            setHoursWorkedInput('0');
 
             // Security Init
             const sec = employee.payroll?.has_security !== undefined ? employee.payroll.has_security : true;
@@ -221,7 +247,12 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
 
     // Derived Values
     const effectiveDaysWorked = isDaily ? selectedDays.length : 0;
-    const paidBase = isDaily ? Math.round(dailyRate * effectiveDaysWorked) : Math.round(baseSalary / 2);
+    const effectiveHoursWorked = isHourly ? (Number.parseFloat(hoursWorkedInput || '0') || 0) : 0;
+    const paidBase = isDaily
+        ? Math.round(dailyRate * effectiveDaysWorked)
+        : isHourly
+            ? Math.round(hourlyRate * effectiveHoursWorked)
+            : Math.round(baseSalary / 2);
     const transport = (isDaily || !includesTransportAid) ? 0 : (config?.auxilio_transporte || 0) / 2;
 
     const handleUpdateBaseSalary = async () => {
@@ -229,7 +260,9 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
         try {
             const payload = isDaily
                 ? { daily_rate: Number(tempDailyRate) }
-                : { base_salary: Number(tempBaseSalary) };
+                : isHourly
+                    ? { hourly_rate: Number(tempHourlyRate) }
+                    : { base_salary: Number(tempBaseSalary) };
 
             const res = await apiFetch(`/api/nomina/employees/${employee.id}/salary`, {
                 method: 'POST',
@@ -240,11 +273,13 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
             if (res.ok) {
                 if (isDaily) {
                     setDailyRate(Number(tempDailyRate));
+                } else if (isHourly) {
+                    setHourlyRate(Number(tempHourlyRate));
                 } else {
                     setBaseSalary(Number(tempBaseSalary));
                 }
                 setIsEditingBase(false);
-                notify({ type: 'success', message: isDaily ? 'Valor por día actualizado correctamente' : 'Salario base actualizado correctamente' });
+                notify({ type: 'success', message: isDaily ? 'Valor por día actualizado correctamente' : (isHourly ? 'Valor por hora actualizado correctamente' : 'Salario base actualizado correctamente') });
             } else {
                 const errorData = await res.json();
                 notify({ type: 'error', message: errorData.error || 'Error al actualizar' });
@@ -479,8 +514,9 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                 period_start: new Date(period.start + 'T00:00:00Z').toISOString(),
                 period_end: new Date(period.end + 'T23:59:59Z').toISOString(),
                 days_worked: isDaily ? effectiveDaysWorked : 0,
-                sundays_qty: isDaily ? 0 : sundaysQty,
-                madrugones_qty: isDaily ? 0 : madrugonesQty,
+                hours_worked: isHourly ? effectiveHoursWorked : 0,
+                sundays_qty: isFixed ? sundaysQty : 0,
+                madrugones_qty: isFixed ? madrugonesQty : 0,
                 advance: advance,
                 commission: shouldBePartial ? 0 : commission, // Sin comisión si es parcial
                 includes_security: isDaily ? false : includesSecurity,
@@ -520,11 +556,11 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                 <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center bg-[#111]">
                     <div>
                         <h2 className="text-xl font-bold flex items-center gap-3">
-                            {isDaily ? 'Recibo de Pago' : 'Generar Pago'}: {employee?.name}
-                            {isDaily && (
+                            {(isDaily || isHourly) ? 'Recibo de Pago' : 'Generar Pago'}: {employee?.name}
+                            {(isDaily || isHourly) && (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                                    <span className="material-symbols-outlined text-[10px]">calendar_today</span>
-                                    Por Días
+                                    <span className="material-symbols-outlined text-[10px]">{isDaily ? 'calendar_today' : 'schedule'}</span>
+                                    {isDaily ? 'Por Días' : 'Por Horas'}
                                 </span>
                             )}
                         </h2>
@@ -544,7 +580,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                 <div className="flex-1 overflow-y-auto p-6 md:p-8">
 
                     {/* STEP 1: PERIOD (Fixed) or CALENDAR (Daily) */}
-                    {currentStep === 1 && !isDaily && (
+                    {currentStep === 1 && isFixed && (
                         <div className="space-y-6 max-w-lg mx-auto">
                             <h3 className="text-lg font-bold">Seleccionar Periodo de Pago</h3>
                             <div className="grid grid-cols-2 gap-4">
@@ -579,6 +615,69 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                             loading={loading}
                             paidBase={paidBase}
                         />
+                    )}
+
+                    {/* STEP 1 HOURLY: HOURS WORKED */}
+                    {currentStep === 1 && isHourly && (
+                        <div className="space-y-6 max-w-xl mx-auto py-4">
+                            <div className="text-center space-y-2">
+                                <h3 className="text-lg font-bold uppercase tracking-widest text-[var(--text-secondary-color)]">Horas Trabajadas</h3>
+                                <p className="text-sm text-[var(--text-secondary-color)]">
+                                    Periodo: {period.start || 'N/A'} a {period.end || 'N/A'}
+                                </p>
+                            </div>
+
+                            <div className="bg-white/5 rounded-3xl p-5 border border-white/5 text-center space-y-3">
+                                <span className="text-xs font-bold text-[var(--text-secondary-color)] uppercase tracking-widest block">Valor pagado por hora</span>
+                                {isEditingBase ? (
+                                    <div className="flex items-center justify-center gap-2">
+                                        <input
+                                            type="number"
+                                            value={tempHourlyRate}
+                                            onChange={e => setTempHourlyRate(e.target.value)}
+                                            className="bg-[var(--dark-color)] border-2 border-[var(--primary-color)] text-2xl font-bold font-mono w-44 px-3 py-2.5 rounded-2xl text-center outline-none"
+                                            autoFocus
+                                        />
+                                        <button onClick={handleUpdateBaseSalary} disabled={loading} className="bg-[var(--success-color)] p-2 rounded-lg hover:brightness-110">
+                                            <span className="material-symbols-outlined text-sm">check</span>
+                                        </button>
+                                        <button onClick={() => { setIsEditingBase(false); setTempHourlyRate(hourlyRate); }} className="bg-white/10 p-2 rounded-lg hover:bg-white/20">
+                                            <span className="material-symbols-outlined text-sm">close</span>
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button onClick={() => setIsEditingBase(true)} className="mx-auto flex items-center gap-2 group">
+                                        <span className="text-3xl font-bold font-mono text-cyan-400 group-hover:brightness-110">{formatCLP(hourlyRate)}</span>
+                                        <span className="material-symbols-outlined text-base text-cyan-300/80">edit</span>
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-3xl p-6 text-center space-y-3">
+                                <span className="text-xs font-bold text-cyan-300 uppercase tracking-widest block">Horas trabajadas en el periodo</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    inputMode="decimal"
+                                    value={hoursWorkedInput}
+                                    onChange={e => {
+                                        const next = String(e.target.value || '').replace(',', '.');
+                                        if (/^\d*\.?\d*$/.test(next)) {
+                                            setHoursWorkedInput(next);
+                                        }
+                                    }}
+                                    className="bg-[var(--dark-color)] border-2 border-cyan-500/50 text-4xl font-black font-mono w-32 py-3 rounded-2xl text-center outline-none shadow-2xl shadow-cyan-500/10"
+                                    placeholder="0"
+                                />
+                                <p className="text-[11px] text-cyan-300/80">Puedes usar decimales (ej: 7.5). Puedes dejar el campo vacío mientras escribes.</p>
+                            </div>
+
+                            <div className="bg-white/5 rounded-2xl p-5 border border-[var(--border-color)] flex justify-between items-center">
+                                <span className="text-sm text-[var(--text-secondary-color)]">Subtotal (horas x valor/hora)</span>
+                                <span className="font-mono text-2xl font-bold text-[var(--success-color)]">{formatCLP(paidBase)}</span>
+                            </div>
+                        </div>
                     )}
 
                     {/* STEP 3 DAILY: SUMMARY */}
@@ -638,7 +737,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                     )}
 
                     {/* STEP 2: BASE SALARY (Fixed only) */}
-                    {currentStep === 2 && !isDaily && (
+                    {currentStep === 2 && isFixed && (
                         <div className="space-y-10 max-w-lg mx-auto py-4">
                             {/* Pay Type Badge */}
                             <div className="flex justify-center">
@@ -750,7 +849,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                     )}
 
                     {/* STEP 3: TRANSPORT AID (Fixed only) */}
-                    {currentStep === 3 && !isDaily && (
+                    {((isFixed && currentStep === 3) || (isHourly && currentStep === 2)) && (
                         <div className="space-y-6 max-w-xl mx-auto py-6">
                             <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Auxilio de Transporte</h3>
                             <div className="grid grid-cols-2 gap-4">
@@ -786,7 +885,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                     )}
 
                     {/* STEP 4: SUNDAYS (Fixed only) */}
-                    {currentStep === 4 && !isDaily && (
+                    {currentStep === 4 && isFixed && (
                         <div className="space-y-6 max-w-2xl mx-auto">
                             <h3 className="text-lg font-bold">Dominicales Trabajados</h3>
 
@@ -879,7 +978,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                     )}
 
                     {/* STEP 5: MADRUGONES (Fixed only) */}
-                    {currentStep === 5 && !isDaily && (
+                    {currentStep === 5 && isFixed && (
                         <div className="space-y-8 max-w-2xl mx-auto py-2">
                             <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Madrugones</h3>
 
@@ -1025,7 +1124,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                     )}
 
                     {/* STEP 6: ADVANCES (Fixed) / STEP 2: ADVANCES (Daily) */}
-                    {((currentStep === 6 && !isDaily) || (currentStep === 2 && isDaily)) && (
+                    {((currentStep === 6 && isFixed) || (currentStep === 2 && isDaily) || (currentStep === 3 && isHourly)) && (
                         <div className="space-y-10 max-w-lg mx-auto py-4">
                             <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Adelantos de Nómina</h3>
 
@@ -1090,7 +1189,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                     )}
 
                     {/* STEP 7: HEALTH / PENSION (Fixed only) */}
-                    {currentStep === 7 && !isDaily && (
+                    {((currentStep === 7 && isFixed) || (currentStep === 4 && isHourly)) && (
                         <div className="space-y-8 max-w-3xl mx-auto py-2">
                             <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Seguridad Social</h3>
 
@@ -1228,7 +1327,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
 
                     {/* STEP 8: ADJUSTMENTS (Fixed only) */}
                     {
-                        currentStep === 8 && !isDaily && (
+                        ((currentStep === 8 && isFixed) || (currentStep === 5 && isHourly)) && (
                             <div className="space-y-6 max-w-2xl mx-auto py-2">
                                 <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Ajustes y Extras</h3>
 
@@ -1341,14 +1440,18 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
 
                     {/* STEP 9: SUMMARY (Fixed only) */}
                     {
-                        currentStep === 9 && !isDaily && (
+                        ((currentStep === 9 && isFixed) || (currentStep === 6 && isHourly)) && (
                             <div className="space-y-4 max-w-lg mx-auto bg-[var(--background-color)] p-6 rounded-2xl border border-[var(--border-color)]">
                                 <h3 className="text-xl font-bold text-center mb-6">Resumen de Pago</h3>
 
                                 <div className="space-y-2 text-sm">
                                     <div className="flex justify-between">
                                         <span className="text-[var(--text-secondary-color)]">
-                                            {isDaily ? `Pago por ${daysWorked} días (${formatCLP(dailyRate)}/día)` : 'Salario Base Quincenal (50%)'}
+                                            {isDaily
+                                                ? `Pago por ${effectiveDaysWorked} días (${formatCLP(dailyRate)}/día)`
+                                                : isHourly
+                                                    ? `Pago por ${effectiveHoursWorked} horas (${formatCLP(hourlyRate)}/hora)`
+                                                    : 'Salario Base Quincenal (50%)'}
                                         </span>
                                         <span className="font-mono">{formatCLP(paidBase)}</span>
                                     </div>
@@ -1451,7 +1554,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                         ) : (
                             <button
                                 onClick={handleConfirm}
-                                disabled={loading || (isDaily && effectiveDaysWorked === 0)}
+                                disabled={loading || (isDaily && effectiveDaysWorked === 0) || (isHourly && effectiveHoursWorked <= 0)}
                                 className="px-8 py-2 bg-[var(--success-color)] rounded-lg font-bold hover:brightness-110 shadow-lg shadow-green-500/20 active:scale-95 transition-all disabled:opacity-50"
                             >
                                 {loading ? 'Procesando...' : (shouldBePartial ? 'Generar Pago Parcial' : 'Confirmar y Generar Pago')}

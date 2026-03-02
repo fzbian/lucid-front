@@ -27,6 +27,7 @@ export async function createUser(user) {
     pay_type: user.pay_type || '',
     base_salary: user.base_salary ? Number(user.base_salary) : 0,
     daily_rate: user.daily_rate ? Number(user.daily_rate) : 0,
+    hourly_rate: user.hourly_rate ? Number(user.hourly_rate) : 0,
   };
   const res = await req('', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   return await res.json();

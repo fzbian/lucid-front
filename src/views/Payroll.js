@@ -685,6 +685,7 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                         const isSendingComprobante = isPaid && sendingComprobanteId === payment.id;
                         const userPayType = user.payroll?.pay_type || 'fixed';
                         const userIsDaily = userPayType === 'daily';
+                        const userIsHourly = userPayType === 'madrugones';
 
                         // Determine card style based on status
                         let cardStyle = 'border-[var(--border-color)] bg-[var(--background-color)] hover:bg-white/[0.03]';
@@ -715,18 +716,23 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2">
                                             <span className="font-bold truncate">{user.name || user.username}</span>
-                                            <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shrink-0 ${
-                                                userIsDaily
-                                                    ? 'bg-amber-500/15 text-amber-400/80'
-                                                    : 'bg-blue-500/10 text-blue-400/50'
-                                            }`}>
-                                                {userIsDaily ? 'Días' : 'Fijo'}
+                                                <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shrink-0 ${
+                                                    userIsDaily
+                                                        ? 'bg-amber-500/15 text-amber-400/80'
+                                                        : userIsHourly
+                                                            ? 'bg-cyan-500/15 text-cyan-400/80'
+                                                            : 'bg-blue-500/10 text-blue-400/50'
+                                                }`}>
+                                                {userIsDaily ? 'Días' : (userIsHourly ? 'Horas' : 'Fijo')}
                                             </span>
                                         </div>
                                         <div className="text-xs text-[var(--text-secondary-color)] mt-0.5">
                                             {user.role}
                                             {isPaid && payment.pay_type === 'daily' && payment.days_worked > 0 && (
                                                 <span className="ml-2 text-amber-400 font-medium">· {payment.days_worked} días</span>
+                                            )}
+                                            {isPaid && payment.pay_type === 'madrugones' && payment.hours_worked > 0 && (
+                                                <span className="ml-2 text-cyan-400 font-medium">· {payment.hours_worked} horas</span>
                                             )}
                                         </div>
                                     </div>
@@ -1106,6 +1112,7 @@ function EmployeeManager({ onClose }) {
             pay_type: payType,
             base_salary: emp.payroll?.base_salary || 0,
             daily_rate: emp.payroll?.daily_rate || 0,
+            hourly_rate: emp.payroll?.hourly_rate || 0,
         });
         // Load POS assignments draft
         const existing = posAssignments[emp.id] || [];
@@ -1128,6 +1135,7 @@ function EmployeeManager({ onClose }) {
                 pay_type: editDraft.pay_type,
                 base_salary: Number(editDraft.base_salary),
                 daily_rate: Number(editDraft.daily_rate),
+                hourly_rate: Number(editDraft.hourly_rate),
             };
 
             const [empRes, posRes] = await Promise.all([
@@ -1156,6 +1164,7 @@ function EmployeeManager({ onClose }) {
                                 pay_type: editDraft.pay_type,
                                 base_salary: Number(editDraft.base_salary),
                                 daily_rate: Number(editDraft.daily_rate),
+                                hourly_rate: Number(editDraft.hourly_rate),
                             }
                         };
                     }
@@ -1198,7 +1207,8 @@ function EmployeeManager({ onClose }) {
     // Stats
     const totalEmployees = employees.length;
     const dailyCount = employees.filter(e => (e.payroll?.pay_type || 'fixed') === 'daily').length;
-    const fixedCount = totalEmployees - dailyCount;
+    const hourlyCount = employees.filter(e => (e.payroll?.pay_type || 'fixed') === 'madrugones').length;
+    const fixedCount = totalEmployees - dailyCount - hourlyCount;
     const withPosCount = employees.filter(e => (posAssignments[e.id] || []).length > 0).length;
 
     return (
@@ -1222,7 +1232,7 @@ function EmployeeManager({ onClose }) {
                     </div>
 
                     {/* Stats */}
-                    <div className="grid grid-cols-4 gap-3">
+                    <div className="grid grid-cols-5 gap-3">
                         <div className="bg-white/5 rounded-xl p-3 text-center">
                             <div className="text-lg font-bold font-mono">{totalEmployees}</div>
                             <div className="text-[10px] uppercase tracking-widest text-[var(--text-secondary-color)] font-bold">Total</div>
@@ -1234,6 +1244,10 @@ function EmployeeManager({ onClose }) {
                         <div className="bg-amber-500/10 border border-amber-500/15 rounded-xl p-3 text-center">
                             <div className="text-lg font-bold font-mono text-amber-400">{dailyCount}</div>
                             <div className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold">Por Días</div>
+                        </div>
+                        <div className="bg-cyan-500/10 border border-cyan-500/15 rounded-xl p-3 text-center">
+                            <div className="text-lg font-bold font-mono text-cyan-400">{hourlyCount}</div>
+                            <div className="text-[10px] uppercase tracking-widest text-cyan-400/70 font-bold">Por Horas</div>
                         </div>
                         <div className="bg-purple-500/10 border border-purple-500/15 rounded-xl p-3 text-center">
                             <div className="text-lg font-bold font-mono text-purple-400">{withPosCount}</div>
@@ -1255,10 +1269,13 @@ function EmployeeManager({ onClose }) {
                                 const isSaving = savingId === emp.id;
                                 const payType = isEditing ? editDraft.pay_type : (emp.payroll?.pay_type || 'fixed');
                                 const isDaily = payType === 'daily';
+                                const isHourly = payType === 'madrugones';
                                 const empPosAssigns = posAssignments[emp.id] || [];
                                 const salaryAmount = isDaily
                                     ? (emp.payroll?.daily_rate || 0)
-                                    : (emp.payroll?.base_salary || 0);
+                                    : isHourly
+                                        ? (emp.payroll?.hourly_rate || 0)
+                                        : (emp.payroll?.base_salary || 0);
 
                                 return (
                                     <div key={emp.id} className={`rounded-2xl border transition-all duration-200 ${
@@ -1272,9 +1289,13 @@ function EmployeeManager({ onClose }) {
                                             <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold ${
                                                 isDaily
                                                     ? 'bg-amber-500/15 text-amber-400'
-                                                    : 'bg-blue-500/15 text-blue-400'
+                                                    : isHourly
+                                                        ? 'bg-cyan-500/15 text-cyan-400'
+                                                        : 'bg-blue-500/15 text-blue-400'
                                             }`}>
-                                                <span className="material-symbols-outlined">{isDaily ? 'calendar_today' : 'person'}</span>
+                                                <span className="material-symbols-outlined">
+                                                    {isDaily ? 'calendar_today' : (isHourly ? 'schedule' : 'person')}
+                                                </span>
                                             </div>
 
                                             {/* Info */}
@@ -1284,9 +1305,11 @@ function EmployeeManager({ onClose }) {
                                                     <span className={`shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
                                                         isDaily
                                                             ? 'bg-amber-500/15 text-amber-400/80'
-                                                            : 'bg-blue-500/10 text-blue-400/60'
+                                                            : isHourly
+                                                                ? 'bg-cyan-500/15 text-cyan-400/80'
+                                                                : 'bg-blue-500/10 text-blue-400/60'
                                                     }`}>
-                                                        {isDaily ? 'Días' : 'Fijo'}
+                                                        {isDaily ? 'Días' : (isHourly ? 'Horas' : 'Fijo')}
                                                     </span>
                                                 </div>
                                                 <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--text-secondary-color)]">
@@ -1330,7 +1353,7 @@ function EmployeeManager({ onClose }) {
                                                     <>
                                                         <div className="text-lg font-bold font-mono">{formatCLP(salaryAmount)}</div>
                                                         <div className="text-[10px] text-[var(--text-secondary-color)] uppercase tracking-wider">
-                                                            {isDaily ? '/ día' : '/ mes'}
+                                                            {isDaily ? '/ día' : (isHourly ? '/ hora' : '/ mes')}
                                                         </div>
                                                     </>
                                                 )}
@@ -1426,17 +1449,6 @@ function EmployeeManager({ onClose }) {
                                                         </label>
                                                         <div className="flex gap-2">
                                                             <button
-                                                                onClick={() => setEditDraft({ ...editDraft, pay_type: 'fixed' })}
-                                                                className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-all active:scale-[0.98] ${
-                                                                    !isDaily
-                                                                        ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
-                                                                        : 'bg-white/5 text-[var(--text-secondary-color)] border-[var(--border-color)] hover:bg-white/10'
-                                                                }`}
-                                                            >
-                                                                <span className="material-symbols-outlined text-sm align-middle mr-1">attach_money</span>
-                                                                Fijo
-                                                            </button>
-                                                            <button
                                                                 onClick={() => setEditDraft({ ...editDraft, pay_type: 'daily' })}
                                                                 className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-all active:scale-[0.98] ${
                                                                     isDaily
@@ -1447,20 +1459,42 @@ function EmployeeManager({ onClose }) {
                                                                 <span className="material-symbols-outlined text-sm align-middle mr-1">calendar_today</span>
                                                                 Por Días
                                                             </button>
+                                                            <button
+                                                                onClick={() => setEditDraft({ ...editDraft, pay_type: 'fixed' })}
+                                                                className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-all active:scale-[0.98] ${
+                                                                    (!isDaily && !isHourly)
+                                                                        ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                                                                        : 'bg-white/5 text-[var(--text-secondary-color)] border-[var(--border-color)] hover:bg-white/10'
+                                                                }`}
+                                                            >
+                                                                <span className="material-symbols-outlined text-sm align-middle mr-1">attach_money</span>
+                                                                Fijo
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setEditDraft({ ...editDraft, pay_type: 'madrugones' })}
+                                                                className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-all active:scale-[0.98] ${
+                                                                    isHourly
+                                                                        ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
+                                                                        : 'bg-white/5 text-[var(--text-secondary-color)] border-[var(--border-color)] hover:bg-white/10'
+                                                                }`}
+                                                            >
+                                                                <span className="material-symbols-outlined text-sm align-middle mr-1">schedule</span>
+                                                                Madrugones
+                                                            </button>
                                                         </div>
                                                     </div>
 
                                                     {/* Salario / Valor Día */}
                                                     <div>
                                                         <label className="block text-[10px] uppercase tracking-widest text-[var(--text-secondary-color)] font-bold mb-1.5">
-                                                            {isDaily ? 'Valor por Día ($)' : 'Salario Base Mensual ($)'}
+                                                            {isDaily ? 'Valor por Día ($)' : (isHourly ? 'Valor por Hora ($)' : 'Salario Base Mensual ($)')}
                                                         </label>
                                                         <input
                                                             type="number"
-                                                            value={isDaily ? editDraft.daily_rate : editDraft.base_salary}
+                                                            value={isDaily ? editDraft.daily_rate : (isHourly ? editDraft.hourly_rate : editDraft.base_salary)}
                                                             onChange={e => setEditDraft({
                                                                 ...editDraft,
-                                                                [isDaily ? 'daily_rate' : 'base_salary']: e.target.value
+                                                                [isDaily ? 'daily_rate' : (isHourly ? 'hourly_rate' : 'base_salary')]: e.target.value
                                                             })}
                                                             className="w-full bg-[var(--dark-color)] border border-[var(--border-color)] focus:border-[var(--primary-color)] rounded-xl px-3 py-2.5 text-sm font-mono outline-none transition-colors"
                                                             placeholder="0"

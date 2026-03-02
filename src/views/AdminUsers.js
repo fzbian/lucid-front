@@ -24,6 +24,7 @@ export default function AdminUsers() {
     pay_type: 'daily',
     daily_rate: '',
     base_salary: '',
+    hourly_rate: '',
   });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -83,6 +84,7 @@ export default function AdminUsers() {
       pay_type: 'daily',
       daily_rate: '',
       base_salary: '',
+      hourly_rate: '',
     });
     setCreateError('');
     setCreateModalOpen(true);
@@ -118,6 +120,7 @@ export default function AdminUsers() {
         pay_type: createForm.pay_type,
         daily_rate: createForm.pay_type === 'daily' ? Number(createForm.daily_rate) || 0 : 0,
         base_salary: createForm.pay_type === 'fixed' ? Number(createForm.base_salary) || 0 : 0,
+        hourly_rate: createForm.pay_type === 'madrugones' ? Number(createForm.hourly_rate) || 0 : 0,
       });
 
       await refreshUsers();
@@ -272,6 +275,17 @@ export default function AdminUsers() {
                   >
                     Fijo Mensual
                   </button>
+                  <button
+                    type="button"
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                      createForm.pay_type === 'madrugones'
+                        ? 'bg-[var(--primary-color)]/20 border-[var(--primary-color)] text-[var(--primary-color)]'
+                        : 'border-[var(--border-color)] text-[var(--text-secondary-color)] hover:bg-white/5'
+                    }`}
+                    onClick={() => updateCreateForm('pay_type', 'madrugones')}
+                  >
+                    Madrugones
+                  </button>
                 </div>
               </div>
 
@@ -299,6 +313,20 @@ export default function AdminUsers() {
                     min="0"
                     value={createForm.base_salary}
                     onChange={(e) => updateCreateForm('base_salary', e.target.value)}
+                  />
+                </div>
+              )}
+
+              {createForm.pay_type === 'madrugones' && (
+                <div>
+                  <label className="block text-xs text-[var(--text-secondary-color)] mb-1">Valor pagado por hora ($)</label>
+                  <input
+                    className="w-full bg-[var(--dark-color)] border border-[var(--border-color)] rounded-lg px-3 py-2 text-sm focus:border-[var(--primary-color)] focus:outline-none"
+                    placeholder="0"
+                    type="number"
+                    min="0"
+                    value={createForm.hourly_rate}
+                    onChange={(e) => updateCreateForm('hourly_rate', e.target.value)}
                   />
                 </div>
               )}

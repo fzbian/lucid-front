@@ -29,6 +29,7 @@ function buildPaymentSlipDoc(payment, user, config, options = {}) {
     const pageWidth = doc.internal.pageSize.width;
     const margin = 20;
     const isDaily = payment.pay_type === 'daily';
+    const isHourly = payment.pay_type === 'madrugones';
 
     const drawLine = (y) => {
         doc.setDrawColor(200, 200, 200);
@@ -47,7 +48,7 @@ function buildPaymentSlipDoc(payment, user, config, options = {}) {
     doc.text(`NIT: ${config?.nit || '800.000.000-0'}`, margin, 32);
 
     doc.setFontSize(10);
-    doc.text(isDaily ? "RECIBO DE PAGO" : "COMPROBANTE DE NÓMINA", pageWidth - margin, 25, { align: "right" });
+    doc.text((isDaily || isHourly) ? "RECIBO DE PAGO" : "COMPROBANTE DE NÓMINA", pageWidth - margin, 25, { align: "right" });
     doc.text(`No. ${payment.id.toString().padStart(6, '0')}`, pageWidth - margin, 32, { align: "right" });
     doc.text(`Fecha Emisión: ${formatDate(new Date().toISOString())}`, pageWidth - margin, 39, { align: "right" });
 
@@ -78,6 +79,8 @@ function buildPaymentSlipDoc(payment, user, config, options = {}) {
     doc.setFontSize(10);
     if (isDaily) {
         doc.text(`Valor por Día: ${formatCLP(payment.daily_rate)}`, pageWidth - margin, startY + 12, { align: "right" });
+    } else if (isHourly) {
+        doc.text(`Valor por Hora: ${formatCLP(payment.hourly_rate)}`, pageWidth - margin, startY + 12, { align: "right" });
     } else {
         doc.text(`Salario Base: ${formatCLP(payment.base_salary)}`, pageWidth - margin, startY + 12, { align: "right" });
     }
@@ -129,7 +132,7 @@ function buildPaymentSlipDoc(payment, user, config, options = {}) {
         });
     } else {
         const earnings = [
-            ['Salario Básico', formatCLP(payment.paid_base)],
+            [isHourly ? `Pago por Horas (${payment.hours_worked || 0}h x ${formatCLP(payment.hourly_rate || 0)})` : 'Salario Básico', formatCLP(payment.paid_base)],
         ];
 
         if (payment.transport_aid > 0) earnings.push(['Auxilio de Transporte', formatCLP(payment.transport_aid)]);
@@ -228,7 +231,7 @@ function buildPaymentSlipDoc(payment, user, config, options = {}) {
 
 export const generatePaymentSlip = (payment, user, config) => {
     const doc = buildPaymentSlipDoc(payment, user, config);
-    const filePrefix = payment.pay_type === 'daily' ? 'Recibo' : 'Nomina';
+    const filePrefix = (payment.pay_type === 'daily' || payment.pay_type === 'madrugones') ? 'Recibo' : 'Nomina';
     doc.save(`${filePrefix}_${user.name?.replace(/\s+/g, '_')}_${payment.id}.pdf`);
 };
 
