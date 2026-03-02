@@ -10,11 +10,16 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 8082; // production default in docker
 const HOST = process.env.HOST || '0.0.0.0';
-const API_BASE = (process.env.API_BASE || 'http://backend:8080').replace(/\/$/, '');
+const API_BASE = String(process.env.API_BASE || '').trim().replace(/\/$/, '');
 const IMAGE_UPLOAD_BASE = (process.env.IMAGE_UPLOAD_BASE || 'https://rrimg.chinatownlogistic.com').replace(/\/$/, '');
 const FORCE_HTTP = String(process.env.FORCE_HTTP || 'false').toLowerCase() === 'true';
 const FORCE_HTTPS = String(process.env.FORCE_HTTPS || 'false').toLowerCase() === 'true';
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'db.sqlite');
+
+if (!API_BASE) {
+  console.error('Missing required env var: API_BASE');
+  process.exit(1);
+}
 
 function toAbsoluteURL(base, rawPath) {
   const v = String(rawPath || '').trim();

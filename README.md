@@ -12,6 +12,23 @@ Ese comando:
 - construye el frontend (`build`)
 - levanta el servidor de produccion del frontend
 
+## Deploy en Coolify (Docker)
+
+Este proyecto ya incluye `Dockerfile` y queda listo para desplegar en Coolify como aplicación Docker.
+
+Variables de entorno requeridas en Coolify:
+- `API_BASE` (obligatorio)
+  - Ejemplo: `http://backend:8080` o `https://api.tudominio.com`
+- `PORT=8082` (opcional, recomendado mantener `8082`)
+- `CLIENT_API_BASE` (opcional, normalmente vacío)
+
+Puerto a exponer en Coolify:
+- `8082`
+
+Notas:
+- El contenedor falla al iniciar si `API_BASE` no está definido.
+- Si usas despliegue sin Docker (Source), puedes seguir usando `npm run start:prod`.
+
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
 ## Available Scripts
