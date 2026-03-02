@@ -102,13 +102,16 @@ app.use('/api', async (req, res) => {
       },
     };
     if (!['GET', 'HEAD'].includes(req.method)) {
-      // bodyParser.json ya parseó; debemos reenviar como string si es JSON
+      // JSON parseado por bodyParser.json
       if (req.is('application/json') && typeof req.body === 'object') {
         init.body = JSON.stringify(req.body);
       } else if (typeof req.body === 'string') {
         init.body = req.body;
       } else {
-        init.body = undefined;
+        // Importante: para multipart/form-data y otros payloads binarios
+        // debemos reenviar el stream original o se pierde el body.
+        init.body = req;
+        init.duplex = 'half';
       }
     }
     const upstream = await fetch(targetUrl, init);
