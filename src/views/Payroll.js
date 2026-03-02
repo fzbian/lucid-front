@@ -479,6 +479,7 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
     const matrixPayments = Array.isArray(matrix?.payments) ? matrix.payments : [];
     const [pdfModal, setPdfModal] = useState(null); // { title, url, filename }
     const [pdfActionLoadingId, setPdfActionLoadingId] = useState(null);
+    const [sendingComprobanteId, setSendingComprobanteId] = useState(null);
 
     const closePdfModal = useCallback(() => {
         setPdfModal(prev => {
@@ -565,6 +566,16 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
             alert(e.message || 'No se pudo descargar el PDF firmado');
         } finally {
             setPdfActionLoadingId(null);
+        }
+    };
+
+    const handleSendComprobanteClick = async (paymentId, employeeName = '') => {
+        if (!paymentId || sendingComprobanteId !== null) return;
+        setSendingComprobanteId(paymentId);
+        try {
+            await onSendComprobante(paymentId, employeeName);
+        } finally {
+            setSendingComprobanteId(null);
         }
     };
 
@@ -671,6 +682,7 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                         const isPaid = !!payment;
                         const isPartial = isPaid && payment.is_partial;
                         const isSigned = isPaid && payment.is_signed;
+                        const isSendingComprobante = isPaid && sendingComprobanteId === payment.id;
                         const userPayType = user.payroll?.pay_type || 'fixed';
                         const userIsDaily = userPayType === 'daily';
 
@@ -807,16 +819,22 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                                                 </button>
                                             ) : (
                                                 <button
-                                                    onClick={() => onSendComprobante(payment.id, user.name || user.username || '')}
-                                                    disabled={payment.is_partial}
+                                                    onClick={() => handleSendComprobanteClick(payment.id, user.name || user.username || '')}
+                                                    disabled={payment.is_partial || isSendingComprobante}
                                                     className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors ${
                                                         payment.is_partial
                                                             ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400/60 cursor-not-allowed'
+                                                            : isSendingComprobante
+                                                                ? 'bg-blue-500/10 border border-blue-500/30 text-blue-300 opacity-80 cursor-wait'
                                                             : 'bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20'
                                                     }`}
                                                 >
-                                                    <span className="material-symbols-outlined text-sm">send</span>
-                                                    {payment.is_partial ? 'Pendiente comisión' : 'Enviar comprobante'}
+                                                    {isSendingComprobante ? (
+                                                        <div className="w-3.5 h-3.5 border-2 border-blue-300/60 border-t-transparent rounded-full animate-spin" />
+                                                    ) : (
+                                                        <span className="material-symbols-outlined text-sm">send</span>
+                                                    )}
+                                                    {payment.is_partial ? 'Pendiente comisión' : isSendingComprobante ? 'Enviando...' : 'Enviar comprobante'}
                                                 </button>
                                             )}
                                         </div>

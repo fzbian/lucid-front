@@ -83,12 +83,22 @@ if (FORCE_HTTPS) {
 app.use('/api', async (req, res) => {
   try {
     const targetUrl = API_BASE + req.originalUrl; // mantiene /api/...
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http')
+      .split(',')[0]
+      .trim();
+    const forwardedHost = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+      .split(',')[0]
+      .trim();
+
     const init = {
       method: req.method,
       headers: {
         // Propaga content-type si existe
         ...(req.headers['content-type'] ? { 'content-type': req.headers['content-type'] } : {}),
         ...(req.headers['accept'] ? { 'accept': req.headers['accept'] } : {}),
+        // Preserva el host/protocolo visible por el cliente para URLs absolutas generadas por la API.
+        ...(forwardedProto ? { 'x-forwarded-proto': forwardedProto } : {}),
+        ...(forwardedHost ? { 'x-forwarded-host': forwardedHost } : {}),
       },
     };
     if (!['GET', 'HEAD'].includes(req.method)) {
