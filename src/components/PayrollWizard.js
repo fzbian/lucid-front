@@ -8,12 +8,13 @@ import { generatePaymentSlip } from '../utils/pdfGenerator';
 const STEPS_FIXED = [
     { id: 1, title: 'Periodo', icon: 'date_range' },
     { id: 2, title: 'Salario Base', icon: 'attach_money' },
-    { id: 3, title: 'Dominicales', icon: 'today' },
-    { id: 4, title: 'Madrugones', icon: 'wb_twilight' },
-    { id: 5, title: 'Adelantos', icon: 'money_off' },
-    { id: 6, title: 'Seguridad Social', icon: 'health_and_safety' },
-    { id: 7, title: 'Ajustes', icon: 'tune' },
-    { id: 8, title: 'Resumen', icon: 'receipt_long' },
+    { id: 3, title: 'Auxilio Transporte', icon: 'local_shipping' },
+    { id: 4, title: 'Dominicales', icon: 'today' },
+    { id: 5, title: 'Madrugones', icon: 'wb_twilight' },
+    { id: 6, title: 'Adelantos', icon: 'money_off' },
+    { id: 7, title: 'Seguridad Social', icon: 'health_and_safety' },
+    { id: 8, title: 'Ajustes', icon: 'tune' },
+    { id: 9, title: 'Resumen', icon: 'receipt_long' },
 ];
 
 const STEPS_DAILY = [
@@ -65,6 +66,9 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
     // Step 5: Advances
     const [advance, setAdvance] = useState(0);
     const [advanceMode, setAdvanceMode] = useState('none'); // none, manual
+
+    // Auxilio de transporte (solo pago fijo)
+    const [includesTransportAid, setIncludesTransportAid] = useState(true);
 
     // Step 6: Health/Pension
     const [includesSecurity, setIncludesSecurity] = useState(true);
@@ -134,6 +138,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
             setIsEditingMadrugonValue(false);
             setAdvance(0);
             setAdvanceMode('none');
+            setIncludesTransportAid(!isDaily);
             setSelectedDays([]);
 
             // Security Init
@@ -212,12 +217,12 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                 }
             }
         }
-    }, [isOpen, employee, initialDates, config?.valor_dominical, config?.valor_dominical_s1, config?.valor_dominical_s2, config?.valor_madrugon, config?.porcentaje_salud, config?.porcentaje_pension, billingConfirmed]);
+    }, [isOpen, employee, initialDates, config?.valor_dominical, config?.valor_dominical_s1, config?.valor_dominical_s2, config?.valor_madrugon, config?.porcentaje_salud, config?.porcentaje_pension, billingConfirmed, isDaily]);
 
     // Derived Values
     const effectiveDaysWorked = isDaily ? selectedDays.length : 0;
     const paidBase = isDaily ? Math.round(dailyRate * effectiveDaysWorked) : Math.round(baseSalary / 2);
-    const transport = isDaily ? 0 : (config?.auxilio_transporte || 0) / 2;
+    const transport = (isDaily || !includesTransportAid) ? 0 : (config?.auxilio_transporte || 0) / 2;
 
     const handleUpdateBaseSalary = async () => {
         setLoading(true);
@@ -479,6 +484,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                 advance: advance,
                 commission: shouldBePartial ? 0 : commission, // Sin comisión si es parcial
                 includes_security: isDaily ? false : includesSecurity,
+                includes_transport_aid: isDaily ? false : includesTransportAid,
                 notes: isDaily ? '' : JSON.stringify(adjustments),
                 aditions: isDaily ? '[]' : JSON.stringify(adjustments.filter(a => a.type === 'income')),
                 deductions: isDaily ? '[]' : JSON.stringify(adjustments.filter(a => a.type === 'deduction')),
@@ -739,11 +745,48 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                                     </p>
                                 </div>
                             </div>
+
                         </div>
                     )}
 
-                    {/* STEP 3: SUNDAYS (Fixed only) */}
+                    {/* STEP 3: TRANSPORT AID (Fixed only) */}
                     {currentStep === 3 && !isDaily && (
+                        <div className="space-y-6 max-w-xl mx-auto py-6">
+                            <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Auxilio de Transporte</h3>
+                            <div className="grid grid-cols-2 gap-4">
+                                {[
+                                    { id: false, label: 'No Aplica', desc: 'No se suma al recibo', icon: 'block' },
+                                    { id: true, label: 'Sí Aplica', desc: `Se suma ${formatCLP((config?.auxilio_transporte || 0) / 2)}`, icon: 'local_shipping' },
+                                ].map(option => (
+                                    <div
+                                        key={option.label}
+                                        onClick={() => setIncludesTransportAid(option.id)}
+                                        className={`p-6 rounded-2xl border cursor-pointer transition-all flex flex-col items-center justify-center gap-3 ${includesTransportAid === option.id
+                                            ? 'bg-blue-500/10 border-blue-500 shadow-lg shadow-blue-500/10'
+                                            : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10'
+                                            }`}
+                                    >
+                                        <div className={`p-3 rounded-full ${includesTransportAid === option.id ? 'bg-blue-500 text-white' : 'bg-white/10 text-[var(--text-secondary-color)]'}`}>
+                                            <span className="material-symbols-outlined text-2xl">{option.icon}</span>
+                                        </div>
+                                        <span className={`text-sm font-bold uppercase tracking-wider ${includesTransportAid === option.id ? 'text-white' : 'text-[var(--text-secondary-color)]'}`}>
+                                            {option.label}
+                                        </span>
+                                        <span className="text-xs text-[var(--text-secondary-color)] text-center">
+                                            {option.desc}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex justify-between items-center">
+                                <span className="text-sm text-[var(--text-secondary-color)]">Valor quincenal considerado</span>
+                                <span className="font-mono text-xl font-bold text-[var(--success-color)]">{formatCLP(transport)}</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* STEP 4: SUNDAYS (Fixed only) */}
+                    {currentStep === 4 && !isDaily && (
                         <div className="space-y-6 max-w-2xl mx-auto">
                             <h3 className="text-lg font-bold">Dominicales Trabajados</h3>
 
@@ -835,8 +878,8 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                         </div>
                     )}
 
-                    {/* STEP 4: MADRUGONES (Fixed only) */}
-                    {currentStep === 4 && !isDaily && (
+                    {/* STEP 5: MADRUGONES (Fixed only) */}
+                    {currentStep === 5 && !isDaily && (
                         <div className="space-y-8 max-w-2xl mx-auto py-2">
                             <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Madrugones</h3>
 
@@ -981,8 +1024,8 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                         </div>
                     )}
 
-                    {/* STEP 5: ADVANCES (Fixed) / STEP 2: ADVANCES (Daily) */}
-                    {((currentStep === 5 && !isDaily) || (currentStep === 2 && isDaily)) && (
+                    {/* STEP 6: ADVANCES (Fixed) / STEP 2: ADVANCES (Daily) */}
+                    {((currentStep === 6 && !isDaily) || (currentStep === 2 && isDaily)) && (
                         <div className="space-y-10 max-w-lg mx-auto py-4">
                             <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Adelantos de Nómina</h3>
 
@@ -1046,8 +1089,8 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                         </div>
                     )}
 
-                    {/* STEP 6: HEALTH / PENSION (Fixed only) */}
-                    {currentStep === 6 && !isDaily && (
+                    {/* STEP 7: HEALTH / PENSION (Fixed only) */}
+                    {currentStep === 7 && !isDaily && (
                         <div className="space-y-8 max-w-3xl mx-auto py-2">
                             <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Seguridad Social</h3>
 
@@ -1183,9 +1226,9 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
 
 
 
-                    {/* STEP 7: ADJUSTMENTS (Fixed only) */}
+                    {/* STEP 8: ADJUSTMENTS (Fixed only) */}
                     {
-                        currentStep === 7 && !isDaily && (
+                        currentStep === 8 && !isDaily && (
                             <div className="space-y-6 max-w-2xl mx-auto py-2">
                                 <h3 className="text-lg font-bold text-center uppercase tracking-widest text-[var(--text-secondary-color)]">Ajustes y Extras</h3>
 
@@ -1296,9 +1339,9 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                         )
                     }
 
-                    {/* STEP 8: SUMMARY (Fixed only) */}
+                    {/* STEP 9: SUMMARY (Fixed only) */}
                     {
-                        currentStep === 8 && !isDaily && (
+                        currentStep === 9 && !isDaily && (
                             <div className="space-y-4 max-w-lg mx-auto bg-[var(--background-color)] p-6 rounded-2xl border border-[var(--border-color)]">
                                 <h3 className="text-xl font-bold text-center mb-6">Resumen de Pago</h3>
 
@@ -1310,7 +1353,9 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                                         <span className="font-mono">{formatCLP(paidBase)}</span>
                                     </div>
                                     <div className="flex justify-between">
-                                        <span className="text-[var(--text-secondary-color)]">Auxilio Transporte</span>
+                                        <span className="text-[var(--text-secondary-color)]">
+                                            Auxilio Transporte {includesTransportAid ? '' : '(No aplica)'}
+                                        </span>
                                         <span className="font-mono">{formatCLP(transport)}</span>
                                     </div>
                                     {sundaysQty > 0 && (
