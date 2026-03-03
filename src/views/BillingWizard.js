@@ -20,6 +20,19 @@ const STEPS = [
     { id: 4, label: 'Confirmar', icon: 'verified' },
 ];
 
+function toNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function gastoFingerprint(gasto) {
+    const fechaValue = gasto?.fecha ? new Date(gasto.fecha).getTime() : 0;
+    const motivo = String(gasto?.motivo || '').trim().toLowerCase();
+    const usuario = String(gasto?.usuario || '').trim().toLowerCase();
+    const monto = toNumber(gasto?.monto).toFixed(2);
+    return `${fechaValue}|${monto}|${motivo}|${usuario}`;
+}
+
 function normalizeDraftStep(year, month) {
     const draft = getBillingDraft(year, month);
     const step = Number(draft?.step);
@@ -153,12 +166,24 @@ export default function BillingWizard() {
                 // data = { posName: [...gastos] }
                 const mapped = {};
                 for (const [pos, list] of Object.entries(data || {})) {
-                    mapped[pos] = (list || []).map(g => ({
-                        id: g.id || g.ID,
-                        motivo: g.motivo || g.Motivo,
-                        monto: g.monto || g.Monto,
-                        fecha: g.fecha || g.Fecha,
-                    }));
+                    mapped[pos] = (list || []).map((g, idx) => {
+                        const rawId = g.id ?? g.ID ?? null;
+                        const id = (rawId === null || rawId === undefined || Number(rawId) <= 0) ? null : Number(rawId);
+                        const item = {
+                            id,
+                            local: g.local ?? g.Local ?? pos,
+                            tipo: g.tipo ?? g.Tipo ?? 'GASTO_COMUN',
+                            motivo: g.motivo ?? g.Motivo ?? '',
+                            monto: g.monto ?? g.Monto ?? 0,
+                            fecha: g.fecha ?? g.Fecha ?? null,
+                            usuario: g.usuario ?? g.Usuario ?? '',
+                        };
+                        const fp = gastoFingerprint(item);
+                        return {
+                            ...item,
+                            _key: id ? `local-${id}` : `virtual-${fp}-${idx}`,
+                        };
+                    });
                 }
                 setCommonGastos(mapped);
             }
@@ -340,15 +365,37 @@ export default function BillingWizard() {
         }
     };
 
-    const handleDeleteGasto = async (pos, gastoId) => {
+    const handleDeleteGasto = async (pos, gasto) => {
+        if (!gasto) return;
+        const ok = window.confirm('Este gasto se excluirá del informe mensual (no se eliminará de la base). ¿Continuar?');
+        if (!ok) return;
+
         try {
-            const res = await apiFetch(`/api/gastos/${gastoId}`, { method: 'DELETE' });
-            if (!res.ok) throw new Error('Error eliminando gasto');
-            setCommonGastos(prev => ({
-                ...prev,
-                [pos]: (prev[pos] || []).filter(g => g.id !== gastoId),
-            }));
-            await loadReportData();
+            const payload = {
+                pos,
+                year,
+                month,
+                gasto: {
+                    id: gasto.id ?? null,
+                    local: gasto.local || pos,
+                    tipo: gasto.tipo || 'GASTO_COMUN',
+                    motivo: gasto.motivo || '',
+                    monto: Number(gasto.monto) || 0,
+                    fecha: gasto.fecha,
+                    usuario: gasto.usuario || '',
+                },
+            };
+
+            const res = await apiFetch('/api/billing/gastos/exclude', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Error excluyendo gasto');
+            }
+            await Promise.all([loadCommonGastosBatch(), loadReportData()]);
         } catch (e) {
             notify({ type: 'error', message: e.message });
         }
@@ -768,7 +815,7 @@ export default function BillingWizard() {
                                                             {gastos.length > 0 && (
                                                                 <div className="bg-[var(--dark-color)] rounded-xl overflow-hidden">
                                                                     {gastos.map((g, idx) => (
-                                                                        <div key={g.id} className={`flex items-center justify-between gap-3 px-3 py-2.5 ${idx < gastos.length - 1 ? 'border-b border-[var(--border-color)]' : ''}`}>
+                                                                        <div key={g._key || `${g.id ?? 'x'}-${idx}`} className={`flex items-center justify-between gap-3 px-3 py-2.5 ${idx < gastos.length - 1 ? 'border-b border-[var(--border-color)]' : ''}`}>
                                                                             <div className="flex items-center gap-2 min-w-0 flex-1">
                                                                                 <span className="material-symbols-outlined text-amber-400/60 text-sm flex-shrink-0">description</span>
                                                                                 <span className="text-sm truncate">{g.motivo}</span>
@@ -777,7 +824,7 @@ export default function BillingWizard() {
                                                                                 <span className="font-mono text-sm">{formatCLP(g.monto)}</span>
                                                                                 {!confirmed && (
                                                                                     <button
-                                                                                        onClick={() => handleDeleteGasto(pos, g.id)}
+                                                                                        onClick={() => handleDeleteGasto(pos, g)}
                                                                                         className="p-1 text-red-400/40 hover:text-red-400 transition-colors rounded-lg hover:bg-red-400/10"
                                                                                     >
                                                                                         <span className="material-symbols-outlined text-sm">delete</span>
