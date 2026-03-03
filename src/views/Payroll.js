@@ -25,17 +25,67 @@ const formatDateTime = (dateString) => {
     });
 };
 
+const resolvePayrollPeriodNumber = (payment) => {
+    const start = new Date(payment?.period_start);
+    const end = new Date(payment?.period_end);
+    if (Number.isNaN(start.getTime())) return 1;
+    if (start.getUTCDate() > 15) return 2;
+    if (!Number.isNaN(end.getTime())) {
+        if (start.getUTCMonth() !== end.getUTCMonth() || end.getUTCDate() > 15) return 2;
+    }
+    return 1;
+};
+
+const getPeriodPayments = (payments, year, monthIndex, periodNum) => {
+    const targetMonth = monthIndex + 1;
+    return (Array.isArray(payments) ? payments : []).filter((p) => {
+        const d = new Date(p.period_start);
+        if (Number.isNaN(d.getTime())) return false;
+        if (d.getUTCFullYear() !== year) return false;
+        if ((d.getUTCMonth() + 1) !== targetMonth) return false;
+        return resolvePayrollPeriodNumber(p) === periodNum;
+    });
+};
+
+const getLatestPaymentsByUser = (payments) => {
+    const byUser = {};
+    (Array.isArray(payments) ? payments : []).forEach((payment) => {
+        const userId = payment?.user_id;
+        if (!userId) return;
+        const current = byUser[userId];
+        if (!current) {
+            byUser[userId] = payment;
+            return;
+        }
+        const currentTs = new Date(current.created_at || current.period_end || 0).getTime();
+        const nextTs = new Date(payment.created_at || payment.period_end || 0).getTime();
+        if (nextTs > currentTs || (nextTs === currentTs && (payment.id || 0) > (current.id || 0))) {
+            byUser[userId] = payment;
+        }
+    });
+    return byUser;
+};
+
+const buildPeriodExclusionSet = (periodExclusions) => {
+    const set = new Set();
+    (Array.isArray(periodExclusions) ? periodExclusions : []).forEach((exclusion) => {
+        set.add(`${exclusion.year}-${exclusion.month}-${exclusion.period}-${exclusion.user_id}`);
+    });
+    return set;
+};
+
 const normalizePayrollMatrix = (payload) => ({
     users: Array.isArray(payload?.users) ? payload.users : [],
     payments: Array.isArray(payload?.payments) ? payload.payments : [],
-    stats: payload?.stats && typeof payload.stats === 'object' ? payload.stats : {}
+    stats: payload?.stats && typeof payload.stats === 'object' ? payload.stats : {},
+    period_exclusions: Array.isArray(payload?.period_exclusions) ? payload.period_exclusions : []
 });
 
 export default function Payroll() {
     const navigate = useNavigate();
     const { notify } = useNotifications();
     const [year, setYear] = useState(new Date().getFullYear());
-    const [matrix, setMatrix] = useState({ users: [], payments: [], stats: {} });
+    const [matrix, setMatrix] = useState({ users: [], payments: [], stats: {}, period_exclusions: [] });
     const [loading, setLoading] = useState(false);
 
     // Config state (kept for "Settings" button)
@@ -58,6 +108,15 @@ export default function Payroll() {
     const currentUser = getSessionUsername();
     const matrixUsers = Array.isArray(matrix?.users) ? matrix.users : [];
     const matrixPayments = Array.isArray(matrix?.payments) ? matrix.payments : [];
+    const periodExclusionSet = useMemo(
+        () => buildPeriodExclusionSet(matrix?.period_exclusions),
+        [matrix?.period_exclusions]
+    );
+
+    const isUserIncludedInPeriod = useCallback((userId, monthIndex, periodNum) => {
+        const key = `${year}-${monthIndex + 1}-${periodNum}-${userId}`;
+        return !periodExclusionSet.has(key);
+    }, [year, periodExclusionSet]);
 
     const initialWizardDates = useMemo(() => {
         if (!selectedPeriod) return null;
@@ -86,6 +145,39 @@ export default function Payroll() {
         } catch (e) { console.error(e); }
         finally { setLoading(false); }
     }, [year]);
+
+    const handleTogglePeriodInclusion = async ({ monthIndex, periodNum, userId, included }) => {
+        try {
+            const res = await apiFetch('/api/nomina/period-inclusion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    year,
+                    month: monthIndex + 1,
+                    period: periodNum,
+                    user_id: userId,
+                    included
+                })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                notify({ type: 'error', message: err.error || 'No se pudo actualizar la inclusión' });
+                return false;
+            }
+            await loadMatrix();
+            notify({
+                type: 'success',
+                message: included
+                    ? 'Empleado incluido en la quincena'
+                    : 'Empleado excluido de la quincena'
+            });
+            return true;
+        } catch (e) {
+            console.error(e);
+            notify({ type: 'error', message: 'Error de conexión' });
+            return false;
+        }
+    };
 
     const fetchBillingStatus = useCallback(async () => {
         try {
@@ -123,30 +215,17 @@ export default function Payroll() {
 
     // Helper: Get payment status for a specific period
     const getPeriodStatus = (monthIndex, periodNum) => { // periodNum: 1 or 2
-        // Find payments for this window
-        // Month Index is 0-11. Backend stores Dates.
-        // Needs robust matching.
-        // Let's filter payments locally since we have them all.
-        const targetMonth = monthIndex + 1;
+        const paymentsInPeriod = getPeriodPayments(matrixPayments, year, monthIndex, periodNum);
+        const paymentByUser = getLatestPaymentsByUser(paymentsInPeriod);
+        const eligibleUsersCount = matrixUsers.filter((u) => isUserIncludedInPeriod(u.id, monthIndex, periodNum)).length;
+        const paidCount = matrixUsers.filter((u) => (
+            isUserIncludedInPeriod(u.id, monthIndex, periodNum) && !!paymentByUser[u.id]
+        )).length;
 
-        const paymentsInPeriod = matrixPayments.filter(p => {
-            const d = new Date(p.period_start);
-            // Check Year
-            if (d.getUTCFullYear() !== year) return false;
-            // Check Month
-            if ((d.getUTCMonth() + 1) !== targetMonth) return false;
-            // Check Period (Day <= 15 is 1, >15 is 2)
-            const day = d.getUTCDate();
-            const pNum = day <= 15 ? 1 : 2;
-            return pNum === periodNum;
-        });
-
-        const activeUsersCount = matrixUsers.length;
-        const paidCount = paymentsInPeriod.length;
-
+        if (eligibleUsersCount === 0) return 'empty';
         if (paidCount === 0) return 'empty';
-        if (paidCount >= activeUsersCount) return 'complete'; // All paid
-        return 'partial'; // Some missing
+        if (paidCount >= eligibleUsersCount) return 'complete';
+        return 'partial';
     };
 
     // Helper: check if billing for a given month (0-indexed) is confirmed
@@ -367,6 +446,7 @@ export default function Payroll() {
                             billingConfirmed={isMonthBillingConfirmed(selectedPeriod.month)}
                             onAddCommission={handleAddCommission}
                             onSendComprobante={handleSendComprobante}
+                            onToggleInclusion={handleTogglePeriodInclusion}
                             navigate={navigate}
                         />
                     )}
@@ -465,15 +545,17 @@ function PeriodCard({ label, status, onClick }) {
     );
 }
 
-function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onPay, onDelete, config, billingConfirmed, onAddCommission, onSendComprobante, navigate }) {
+function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onPay, onDelete, config, billingConfirmed, onAddCommission, onSendComprobante, onToggleInclusion, navigate }) {
     const periodLabel = periodNum === 1 ? "1ra Quincena" : "2da Quincena";
     const periodDates = periodNum === 1 ? "1 — 15" : "16 — Fin de mes";
     const is2ndFortnight = periodNum === 2;
-    const matrixUsers = Array.isArray(matrix?.users) ? matrix.users : [];
-    const matrixPayments = Array.isArray(matrix?.payments) ? matrix.payments : [];
+    const matrixUsers = useMemo(() => (Array.isArray(matrix?.users) ? matrix.users : []), [matrix?.users]);
+    const matrixPayments = useMemo(() => (Array.isArray(matrix?.payments) ? matrix.payments : []), [matrix?.payments]);
+    const matrixExclusions = useMemo(() => (Array.isArray(matrix?.period_exclusions) ? matrix.period_exclusions : []), [matrix?.period_exclusions]);
     const [pdfModal, setPdfModal] = useState(null); // { title, url, filename }
     const [pdfActionLoadingId, setPdfActionLoadingId] = useState(null);
     const [sendingComprobanteId, setSendingComprobanteId] = useState(null);
+    const [inclusionUpdatingUserId, setInclusionUpdatingUserId] = useState(null);
 
     const closePdfModal = useCallback(() => {
         setPdfModal(prev => {
@@ -506,27 +588,40 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
         return res.blob();
     };
 
-    // Calculate who is paid
-    const targetMonth = monthIndex + 1;
-    const periodPayments = matrixPayments.filter(p => {
-        const d = new Date(p.period_start);
-        if (d.getUTCFullYear() !== year) return false;
-        if ((d.getUTCMonth() + 1) !== targetMonth) return false;
-        const day = d.getUTCDate();
-        const pNum = day <= 15 ? 1 : 2;
-        return pNum === periodNum;
-    });
+    const periodExclusionSet = useMemo(() => buildPeriodExclusionSet(matrixExclusions), [matrixExclusions]);
+    const isUserExcluded = useCallback((userId) => {
+        const key = `${year}-${monthIndex + 1}-${periodNum}-${userId}`;
+        return periodExclusionSet.has(key);
+    }, [monthIndex, periodExclusionSet, periodNum, year]);
 
-    const paymentByUserId = {};
-    periodPayments.forEach(p => paymentByUserId[p.user_id] = p);
+    const periodPayments = useMemo(() => {
+        const raw = getPeriodPayments(matrixPayments, year, monthIndex, periodNum);
+        const byUser = getLatestPaymentsByUser(raw);
+        return Object.values(byUser);
+    }, [matrixPayments, monthIndex, periodNum, year]);
+
+    const paymentByUserId = useMemo(() => {
+        const map = {};
+        periodPayments.forEach((p) => { map[p.user_id] = p; });
+        return map;
+    }, [periodPayments]);
+
+    const eligibleUsers = useMemo(
+        () => matrixUsers.filter((u) => !isUserExcluded(u.id)),
+        [isUserExcluded, matrixUsers]
+    );
+    const paidEligiblePayments = useMemo(
+        () => periodPayments.filter((p) => !isUserExcluded(p.user_id)),
+        [isUserExcluded, periodPayments]
+    );
 
     // Stats
-    const totalUsers = matrixUsers.length;
-    const paidCount = periodPayments.length;
-    const pendingCount = totalUsers - paidCount;
-    const partialCount = periodPayments.filter(p => p.is_partial).length;
+    const totalUsers = eligibleUsers.length;
+    const paidCount = paidEligiblePayments.length;
+    const pendingCount = Math.max(totalUsers - paidCount, 0);
+    const partialCount = paidEligiblePayments.filter((p) => p.is_partial).length;
     const completedCount = paidCount - partialCount;
-    const totalPaid = periodPayments.reduce((acc, p) => acc + p.total_paid, 0);
+    const totalPaid = paidEligiblePayments.reduce((acc, p) => acc + p.total_paid, 0);
 
     const handleOpenSignedPdf = async (payment, user) => {
         if (!payment?.signed_file) return;
@@ -579,6 +674,28 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
         }
     };
 
+    const handleToggleInclusion = async (user, payment) => {
+        const excluded = isUserExcluded(user.id);
+        const nextIncluded = excluded;
+        if (!nextIncluded && payment) {
+            alert('No puedes excluir a un empleado que ya tiene pago en esta quincena. Elimina el pago primero.');
+            return;
+        }
+        if (typeof onToggleInclusion !== 'function') return;
+
+        setInclusionUpdatingUserId(user.id);
+        try {
+            await onToggleInclusion({
+                monthIndex,
+                periodNum,
+                userId: user.id,
+                included: nextIncluded
+            });
+        } finally {
+            setInclusionUpdatingUserId(null);
+        }
+    };
+
     return (
         <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm flex justify-end" onClick={onClose}>
             <div
@@ -612,7 +729,7 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                     <div className="grid grid-cols-4 gap-3 mb-5">
                         <div className="bg-white/5 rounded-xl p-3 text-center">
                             <div className="text-xl font-bold font-mono">{totalUsers}</div>
-                            <div className="text-[10px] uppercase tracking-widest text-[var(--text-secondary-color)] font-bold mt-0.5">Total</div>
+                            <div className="text-[10px] uppercase tracking-widest text-[var(--text-secondary-color)] font-bold mt-0.5">Incluidos</div>
                         </div>
                         <div className="bg-green-500/10 border border-green-500/15 rounded-xl p-3 text-center">
                             <div className="text-xl font-bold font-mono text-green-400">{completedCount}</div>
@@ -682,14 +799,19 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                         const isPaid = !!payment;
                         const isPartial = isPaid && payment.is_partial;
                         const isSigned = isPaid && payment.is_signed;
+                        const isExcluded = isUserExcluded(user.id);
+                        const isIncluded = !isExcluded;
                         const isSendingComprobante = isPaid && sendingComprobanteId === payment.id;
+                        const isUpdatingInclusion = inclusionUpdatingUserId === user.id;
                         const userPayType = user.payroll?.pay_type || 'fixed';
                         const userIsDaily = userPayType === 'daily';
                         const userIsHourly = userPayType === 'madrugones';
 
                         // Determine card style based on status
                         let cardStyle = 'border-[var(--border-color)] bg-[var(--background-color)] hover:bg-white/[0.03]';
-                        if (isPaid && isPartial) {
+                        if (isExcluded && !isPaid) {
+                            cardStyle = 'border-white/10 bg-white/[0.02] opacity-70';
+                        } else if (isPaid && isPartial) {
                             cardStyle = 'border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/10';
                         } else if (isPaid) {
                             cardStyle = 'border-green-500/30 bg-green-500/5 hover:bg-green-500/10';
@@ -716,6 +838,11 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2">
                                             <span className="font-bold truncate">{user.name || user.username}</span>
+                                            {!isIncluded && (
+                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shrink-0 bg-white/10 text-[var(--text-secondary-color)]">
+                                                    Excluido
+                                                </span>
+                                            )}
                                                 <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shrink-0 ${
                                                     userIsDaily
                                                         ? 'bg-amber-500/15 text-amber-400/80'
@@ -733,6 +860,9 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                                             )}
                                             {isPaid && payment.pay_type === 'madrugones' && payment.hours_worked > 0 && (
                                                 <span className="ml-2 text-cyan-400 font-medium">· {payment.hours_worked} horas</span>
+                                            )}
+                                            {!isIncluded && !isPaid && (
+                                                <span className="ml-2">· No participa en esta quincena</span>
                                             )}
                                         </div>
                                     </div>
@@ -760,17 +890,39 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                                         ) : (
                                             <button
                                                 onClick={() => onPay(user)}
-                                                className="px-5 py-2 bg-[var(--primary-color)] text-white text-sm font-bold rounded-xl hover:brightness-110 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+                                                disabled={!isIncluded}
+                                                className={`px-5 py-2 text-sm font-bold rounded-xl transition-all ${
+                                                    isIncluded
+                                                        ? 'bg-[var(--primary-color)] text-white hover:brightness-110 shadow-lg shadow-blue-500/20 active:scale-95'
+                                                        : 'bg-white/10 text-[var(--text-secondary-color)] cursor-not-allowed'
+                                                }`}
                                             >
-                                                Generar Pago
+                                                {isIncluded ? 'Generar Pago' : 'No incluido'}
                                             </button>
                                         )}
                                     </div>
                                 </div>
 
+                                {/* Inclusion controls */}
+                                <div className="px-4 pb-4">
+                                    <button
+                                        onClick={() => handleToggleInclusion(user, payment)}
+                                        disabled={isUpdatingInclusion}
+                                        className={`w-full py-2 rounded-xl text-xs font-bold border transition-colors ${
+                                            isIncluded
+                                                ? 'bg-white/5 border-white/15 hover:bg-white/10 text-[var(--text-secondary-color)]'
+                                                : 'bg-blue-500/10 border-blue-500/30 hover:bg-blue-500/20 text-blue-300'
+                                        } disabled:opacity-60`}
+                                    >
+                                        {isUpdatingInclusion
+                                            ? 'Guardando...'
+                                            : (isIncluded ? 'Excluir de esta quincena' : 'Incluir en esta quincena')}
+                                    </button>
+                                </div>
+
                                 {/* Commission action for partial payments */}
                                 {isPartial && billingConfirmed && (
-                                    <div className="px-4 pb-4">
+                                    <div className="px-4 pb-4 pt-0">
                                         <button
                                             onClick={() => onAddCommission(payment.id, user.id, monthIndex)}
                                             className="w-full py-2.5 bg-purple-500/10 border border-purple-500/30 text-purple-300 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-purple-500/20 active:scale-[0.98] transition-all"
@@ -783,7 +935,7 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
 
                                 {/* Partial note when billing not confirmed */}
                                 {isPartial && !billingConfirmed && (
-                                    <div className="px-4 pb-3">
+                                    <div className="px-4 pb-3 pt-0">
                                         <div className="text-[11px] text-amber-400/50 flex items-center gap-1.5 bg-amber-500/5 rounded-lg px-3 py-2">
                                             <span className="material-symbols-outlined text-sm">info</span>
                                             Confirma el informe de billing para agregar comisiones
@@ -856,7 +1008,7 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                     <div className="flex justify-between items-center">
                         <div>
                             <div className="text-[10px] uppercase tracking-widest text-[var(--text-secondary-color)] font-bold">Total Pagado</div>
-                            <div className="text-xs text-[var(--text-secondary-color)] mt-0.5">{paidCount} de {totalUsers} empleados</div>
+                            <div className="text-xs text-[var(--text-secondary-color)] mt-0.5">{paidCount} de {totalUsers} empleados incluidos</div>
                         </div>
                         <div className="text-2xl font-bold font-mono text-white">
                             {formatCLP(totalPaid)}
