@@ -217,11 +217,9 @@ export default function Payroll() {
                 body: JSON.stringify({ commission: total })
             });
             if (patchRes.ok) {
-                const updatedPayment = await patchRes.json();
+                await patchRes.json();
                 notify({ type: 'success', message: `Comisión de ${formatCLP(total)} agregada exitosamente` });
                 loadMatrix(); // Refresh
-                const user = matrixUsers.find(u => u.id === userId);
-                await handleSendComprobante(updatedPayment.id || paymentId, user?.name || user?.username || '');
             } else {
                 const err = await patchRes.json();
                 notify({ type: 'error', message: err.error || 'Error actualizando pago' });
@@ -253,10 +251,6 @@ export default function Payroll() {
                 const payment = await res.json();
                 setIsWizardOpen(false);
                 loadMatrix(); // Refresh grid
-                const shouldAutoOpenLink = selectedPeriod?.period === 2 && !payment.is_partial;
-                if (shouldAutoOpenLink) {
-                    await handleSendComprobante(payment.id, selectedEmployee?.name || selectedEmployee?.username || '');
-                }
                 return payment;
             }
         } catch (e) { console.error(e); }
@@ -571,6 +565,12 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
 
     const handleSendComprobanteClick = async (paymentId, employeeName = '') => {
         if (!paymentId || sendingComprobanteId !== null) return;
+        const targetName = employeeName || 'este empleado';
+        const confirmed = window.confirm(
+            `Se enviará un mensaje de WhatsApp con el comprobante a ${targetName}.\n\n¿Deseas continuar?`
+        );
+        if (!confirmed) return;
+
         setSendingComprobanteId(paymentId);
         try {
             await onSendComprobante(paymentId, employeeName);
