@@ -104,6 +104,7 @@ export default function Payroll() {
     // POS Assignments (for checking if employee has commission)
     const [allPosAssignments, setAllPosAssignments] = useState([]);
     const [signatureLinkModal, setSignatureLinkModal] = useState(null);
+    const [commissionModal, setCommissionModal] = useState(null);
 
     const currentUser = getSessionUsername();
     const matrixUsers = Array.isArray(matrix?.users) ? matrix.users : [];
@@ -271,7 +272,7 @@ export default function Payroll() {
     };
 
     // Handle adding commission to a partial payment
-    const handleAddCommission = async (paymentId, userId, monthIndex) => {
+    const handleAddCommission = async (paymentId, userId, monthIndex, employeeName = '') => {
         try {
             // Fetch commission for this employee/month
             const cMonth = monthIndex + 1;
@@ -283,31 +284,50 @@ export default function Payroll() {
             const data = await res.json();
             const total = Math.round(data.total || 0);
             const details = data.details || [];
+            setCommissionModal({
+                paymentId,
+                userId,
+                employeeName,
+                reportTotal: total,
+                details,
+            });
+        } catch (e) {
+            console.error(e);
+            notify({ type: 'error', message: 'Error de conexión' });
+        }
+    };
 
-            // Show confirmation with details
-            const detailLines = details.map(d => `  ${d.pos_name} (${d.percentage}%): ${formatCLP(d.commission)}`).join('\n');
-            const msg = `Agregar comisión al pago:\n\nTotal comisión: ${formatCLP(total)}\n${detailLines}\n\n¿Confirmar?`;
-            if (!window.confirm(msg)) return;
+    const handleCommissionModalClose = useCallback(() => {
+        setCommissionModal(null);
+    }, []);
 
-            // PATCH to complete partial payment
-            const patchRes = await apiFetch(`/api/nomina/payments/${paymentId}/commission`, {
+    const handleCommissionComplete = useCallback(async (amount, mode) => {
+        if (!commissionModal?.paymentId) return;
+        try {
+            const patchRes = await apiFetch(`/api/nomina/payments/${commissionModal.paymentId}/commission`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ commission: total })
+                body: JSON.stringify({ commission: amount })
             });
             if (patchRes.ok) {
                 await patchRes.json();
-                notify({ type: 'success', message: `Comisión de ${formatCLP(total)} agregada exitosamente` });
-                loadMatrix(); // Refresh
+                setCommissionModal(null);
+                const successMessage = mode === 'none'
+                    ? 'Pago completado sin agregar nómina.'
+                    : mode === 'manual'
+                        ? `Pago completado con valor manual de ${formatCLP(amount)}.`
+                        : `Pago completado con nómina de informes por ${formatCLP(amount)}.`;
+                notify({ type: 'success', message: successMessage });
+                loadMatrix();
             } else {
-                const err = await patchRes.json();
+                const err = await patchRes.json().catch(() => ({}));
                 notify({ type: 'error', message: err.error || 'Error actualizando pago' });
             }
         } catch (e) {
             console.error(e);
             notify({ type: 'error', message: 'Error de conexión' });
         }
-    };
+    }, [commissionModal, loadMatrix, notify]);
 
     const handlePaymentSuccess = async (data) => {
         /* 
@@ -495,6 +515,14 @@ export default function Payroll() {
                         <SignatureLinkModal
                             payload={signatureLinkModal}
                             onClose={() => setSignatureLinkModal(null)}
+                        />
+                    )}
+
+                    {commissionModal && (
+                        <CommissionCompletionModal
+                            payload={commissionModal}
+                            onClose={handleCommissionModalClose}
+                            onConfirm={handleCommissionComplete}
                         />
                     )}
 
@@ -924,7 +952,7 @@ function PeriodDetailOverlay({ year, monthIndex, periodNum, matrix, onClose, onP
                                 {isPartial && billingConfirmed && (
                                     <div className="px-4 pb-4 pt-0">
                                         <button
-                                            onClick={() => onAddCommission(payment.id, user.id, monthIndex)}
+                                            onClick={() => onAddCommission(payment.id, user.id, monthIndex, user.name || user.username || '')}
                                             className="w-full py-2.5 bg-purple-500/10 border border-purple-500/30 text-purple-300 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-purple-500/20 active:scale-[0.98] transition-all"
                                         >
                                             <span className="material-symbols-outlined text-sm">add_circle</span>
@@ -1058,6 +1086,205 @@ function PdfViewerModal({ title, url, filename, onClose }) {
                     </div>
                 </div>
                 <iframe title={title || 'PDF'} src={url} className="w-full flex-1 bg-[#1f2937]" />
+            </div>
+        </div>
+    );
+}
+
+function CommissionCompletionModal({ payload, onClose, onConfirm }) {
+    const [mode, setMode] = useState('report');
+    const [manualAmount, setManualAmount] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+
+    if (!payload) return null;
+
+    const reportTotal = Number(payload.reportTotal) || 0;
+    const details = Array.isArray(payload.details) ? payload.details : [];
+    const normalizedManualAmount = Number(manualAmount || 0);
+    const hasManualAmount = manualAmount.trim() !== '';
+    const isManualInvalid = mode === 'manual' && (!hasManualAmount || !Number.isFinite(normalizedManualAmount) || normalizedManualAmount < 0);
+
+    const handleSubmit = async () => {
+        const amount = mode === 'none'
+            ? 0
+            : mode === 'manual'
+                ? Math.round(normalizedManualAmount)
+                : reportTotal;
+
+        if (mode === 'manual' && isManualInvalid) {
+            return;
+        }
+
+        setSubmitting(true);
+        try {
+            await onConfirm(amount, mode);
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={submitting ? undefined : onClose}>
+            <div
+                className="bg-[var(--card-color)] border border-[var(--border-color)] rounded-2xl p-6 max-w-2xl w-full shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="flex justify-between items-start mb-5">
+                    <div>
+                        <h3 className="text-xl font-bold">Completar pago parcial</h3>
+                        <p className="text-xs text-[var(--text-secondary-color)] mt-1">
+                            {payload.employeeName ? `${payload.employeeName} · ` : ''}elige cómo completar este pago.
+                        </p>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        disabled={submitting}
+                        className="p-1 hover:bg-white/10 rounded-full disabled:opacity-50"
+                    >
+                        <span className="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+
+                <div className="rounded-2xl border border-purple-500/20 bg-purple-500/5 p-4 mb-5">
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-purple-300/80 font-bold">Valor de informes</div>
+                    <div className="text-3xl font-bold font-mono text-purple-200 mt-1">{formatCLP(reportTotal)}</div>
+                    {details.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                            {details.map((detail, idx) => (
+                                <div key={`${detail.pos_name || 'pos'}-${idx}`} className="flex items-center justify-between text-sm bg-black/10 rounded-xl px-3 py-2">
+                                    <span className="text-[var(--text-secondary-color)]">
+                                        {detail.pos_name} ({detail.percentage}%)
+                                    </span>
+                                    <span className="font-mono font-bold">{formatCLP(detail.commission)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="space-y-3">
+                    <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setMode('none')}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setMode('none');
+                            }
+                        }}
+                        className={`w-full text-left rounded-2xl border px-4 py-4 transition-all ${
+                            mode === 'none'
+                                ? 'border-amber-400 bg-amber-500/10'
+                                : 'border-[var(--border-color)] bg-white/5 hover:bg-white/10'
+                        }`}
+                    >
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <div className="font-bold">1. No agregar nómina</div>
+                                <div className="text-sm text-[var(--text-secondary-color)] mt-1">
+                                    Se completa el pago sin sumar ningún valor adicional.
+                                </div>
+                            </div>
+                            <span className="material-symbols-outlined">
+                                {mode === 'none' ? 'radio_button_checked' : 'radio_button_unchecked'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setMode('report')}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setMode('report');
+                            }
+                        }}
+                        className={`w-full text-left rounded-2xl border px-4 py-4 transition-all ${
+                            mode === 'report'
+                                ? 'border-green-400 bg-green-500/10'
+                                : 'border-[var(--border-color)] bg-white/5 hover:bg-white/10'
+                        }`}
+                    >
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <div className="font-bold">2. Agregar nómina de informes</div>
+                                <div className="text-sm text-[var(--text-secondary-color)] mt-1">
+                                    Se toma automáticamente el valor calculado en el informe.
+                                </div>
+                                <div className="text-sm font-mono text-green-300 mt-2">{formatCLP(reportTotal)}</div>
+                            </div>
+                            <span className="material-symbols-outlined">
+                                {mode === 'report' ? 'radio_button_checked' : 'radio_button_unchecked'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setMode('manual')}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setMode('manual');
+                            }
+                        }}
+                        className={`w-full text-left rounded-2xl border px-4 py-4 transition-all ${
+                            mode === 'manual'
+                                ? 'border-blue-400 bg-blue-500/10'
+                                : 'border-[var(--border-color)] bg-white/5 hover:bg-white/10'
+                        }`}
+                    >
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1">
+                                <div className="font-bold">3. Agregar manual</div>
+                                <div className="text-sm text-[var(--text-secondary-color)] mt-1">
+                                    Ingresa manualmente el valor que se sumará a la nómina.
+                                </div>
+                                {mode === 'manual' && (
+                                    <div className="mt-3">
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="1"
+                                            value={manualAmount}
+                                            onChange={(e) => setManualAmount(e.target.value)}
+                                            onClick={(e) => e.stopPropagation()}
+                                            placeholder="0"
+                                            className="w-full bg-[var(--dark-color)] border border-blue-500/30 rounded-xl px-3 py-2 font-mono outline-none"
+                                        />
+                                        <div className="text-xs text-[var(--text-secondary-color)] mt-2">
+                                            {manualAmount !== '' ? `Se sumará ${formatCLP(Math.max(0, Math.round(normalizedManualAmount || 0)))}` : 'Ingresa un valor manual.'}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <span className="material-symbols-outlined">
+                                {mode === 'manual' ? 'radio_button_checked' : 'radio_button_unchecked'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex gap-3 mt-6">
+                    <button
+                        onClick={onClose}
+                        disabled={submitting}
+                        className="flex-1 h-12 rounded-2xl bg-white/5 border border-[var(--border-color)] font-bold hover:bg-white/10 disabled:opacity-50"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={handleSubmit}
+                        disabled={submitting || isManualInvalid}
+                        className="flex-1 h-12 rounded-2xl bg-[var(--primary-color)] text-white font-bold hover:brightness-110 disabled:opacity-50"
+                    >
+                        {submitting ? 'Guardando...' : 'Completar pago'}
+                    </button>
+                </div>
             </div>
         </div>
     );
