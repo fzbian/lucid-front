@@ -13,7 +13,7 @@ function sortLocalesByName(a, b) {
   return String(a?.[0] || '').localeCompare(String(b?.[0] || ''), 'es', { sensitivity: 'base' });
 }
 
-const DASHBOARD_ALLOWED_LOCALE_NAMES = ['Visto', 'Titanium', 'San Jose', 'Premium', 'Medellin'];
+const DASHBOARD_ALLOWED_LOCALE_NAMES = ['Visto', 'Titanium', 'San Jose', 'Premium', 'Platinum', 'Medellin'];
 
 function isDashboardLocale(name) {
   const safe = String(name || '').trim().toLowerCase();
@@ -414,7 +414,7 @@ export default function Dashboard() {
           ) : localesList.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[var(--border-color)] bg-[var(--dark-color)]/40 px-4 py-6 text-center">
               <p className="text-sm font-medium">No hay locales disponibles para esta vista.</p>
-              <p className="mt-1 text-xs text-[var(--text-secondary-color)]">Solo se muestran: Visto, Titanium, San Jose, Premium y Medellin.</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary-color)]">Solo se muestran: Visto, Titanium, San Jose, Premium, Platinum y Medellin.</p>
             </div>
           ) : (
             <div className="space-y-3">
