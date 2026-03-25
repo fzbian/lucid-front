@@ -39,6 +39,10 @@ function normalizeDraftStep(year, month) {
     return step >= 1 && step <= 4 ? step : 1;
 }
 
+function sortPosNames(a, b) {
+    return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
+}
+
 export default function BillingWizard() {
     const { notify } = useNotifications();
     const navigate = useNavigate();
@@ -85,7 +89,7 @@ export default function BillingWizard() {
     const allPosNames = [...new Set([
         ...Object.keys(fixedCostsByPos),
         ...reportData.map(e => e.pos_name),
-    ])].filter(isPosIncludedInReports).sort();
+    ])].filter(isPosIncludedInReports).sort(sortPosNames);
 
     // Report data keyed by POS
     const reportByPos = {};

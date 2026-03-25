@@ -23,6 +23,10 @@ const BILLING_STEP_LABELS = {
     4: 'Confirmar',
 };
 
+function sortPosNames(a, b) {
+    return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
+}
+
 export default function Billing() {
     const { notify } = useNotifications();
     const navigate = useNavigate();
@@ -154,7 +158,7 @@ export default function Billing() {
 
     const allLocaleOptions = useMemo(() => {
         const set = new Set([...Object.keys(data), ...Object.keys(billingConfigMap)]);
-        return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
+        return Array.from(set).sort(sortPosNames);
     }, [data, billingConfigMap]);
 
     const allKeys = new Set();
@@ -178,7 +182,7 @@ export default function Billing() {
     };
 
     const getRowTotal = (posData) => Object.values(posData).reduce((sum, v) => sum + v, 0);
-    const sortedPosEntries = Object.entries(filteredData).sort((a, b) => a[0].localeCompare(b[0]));
+    const sortedPosEntries = Object.entries(filteredData).sort((a, b) => sortPosNames(a[0], b[0]));
     const grandTotal = Object.values(filteredData).reduce((sum, posData) => sum + getRowTotal(posData), 0);
     const grandTotalSelectedMonth = Object.values(filteredData).reduce((sum, posData) => sum + getMonthValue(posData, selectedMonth), 0);
     const avgSelectedMonthPerPos = sortedPosEntries.length > 0

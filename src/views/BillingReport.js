@@ -12,6 +12,10 @@ const esMonths = [
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ];
 
+function sortPosNames(a, b) {
+    return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
+}
+
 export default function BillingReport() {
     const { notify } = useNotifications();
     const navigate = useNavigate();
@@ -142,7 +146,7 @@ export default function BillingReport() {
 
     // Compute table data
     let totV = 0, totM = 0, totG = 0, totUB = 0, totC = 0, totUN = 0;
-    const posRows = reportData.map(e => {
+    const posRows = [...reportData].sort((a, b) => sortPosNames(a?.pos_name, b?.pos_name)).map(e => {
         const venta = e.venta || 0;
         const margen = e.margen || 0;
         const gastosComunes = e.gastos_comunes || 0;

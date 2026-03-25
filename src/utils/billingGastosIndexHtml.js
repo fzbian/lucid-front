@@ -18,6 +18,10 @@ function formatMoney(value) {
     return formatCLP(Math.round(toNumber(value)));
 }
 
+function sortPosNames(a, b) {
+    return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
+}
+
 function normalizeFixedCostsByPos(raw) {
     const out = {};
     if (!raw || typeof raw !== 'object') return out;
@@ -69,25 +73,27 @@ function normalizeNominaByPos(raw) {
 }
 
 function normalizeRows(rawRows) {
-    return (Array.isArray(rawRows) ? rawRows : []).map((row) => {
-        const posName = row?.posName || row?.pos_name || 'Sin nombre';
-        const servicios = toNumber(row?.servicios);
-        const arriendo = toNumber(row?.arriendo);
-        const fixedFromRow = servicios + arriendo;
-        const gastosComunes = toNumber(row?.gastosComunes ?? row?.gastos_comunes);
-        const nomina = toNumber(row?.nomina ?? row?.nomina_auto);
-        const gastosTotal = toNumber(row?.gastosTot ?? row?.gastos_tot ?? row?.gastos ?? (fixedFromRow + gastosComunes + nomina));
+    return (Array.isArray(rawRows) ? rawRows : [])
+        .map((row) => {
+            const posName = row?.posName || row?.pos_name || 'Sin nombre';
+            const servicios = toNumber(row?.servicios);
+            const arriendo = toNumber(row?.arriendo);
+            const fixedFromRow = servicios + arriendo;
+            const gastosComunes = toNumber(row?.gastosComunes ?? row?.gastos_comunes);
+            const nomina = toNumber(row?.nomina ?? row?.nomina_auto);
+            const gastosTotal = toNumber(row?.gastosTot ?? row?.gastos_tot ?? row?.gastos ?? (fixedFromRow + gastosComunes + nomina));
 
-        return {
-            posName,
-            servicios,
-            arriendo,
-            fixedFromRow,
-            gastosComunes,
-            nomina,
-            gastosTotal,
-        };
-    });
+            return {
+                posName,
+                servicios,
+                arriendo,
+                fixedFromRow,
+                gastosComunes,
+                nomina,
+                gastosTotal,
+            };
+        })
+        .sort((a, b) => sortPosNames(a.posName, b.posName));
 }
 
 function buildSummary(rows) {
@@ -343,4 +349,3 @@ export function openBillingGastosIndex({
         URL.revokeObjectURL(blobUrl);
     }, 60_000);
 }
-

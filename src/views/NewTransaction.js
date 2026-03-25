@@ -12,6 +12,10 @@ import { notifyMutation } from "../mutations";
 import { useNotifications } from "../components/Notifications";
 import { formatCLP } from "../formatMoney";
 
+function sortPosNames(a, b) {
+  return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
+}
+
 export default function NewTransaction() {
   useTitle("Nueva transacción · ATM Ricky Rich");
   const { notify } = useNotifications();
@@ -117,7 +121,10 @@ export default function NewTransaction() {
     if (serverOk !== true) return;
     apiFetch("/api/odoo/pos")
       .then(r => r.ok ? r.json() : [])
-      .then(data => setPosList(Array.isArray(data) ? data.map(p => p.name || p) : []))
+      .then((data) => {
+        const list = Array.isArray(data) ? data.map((p) => String(p?.name || p || '').trim()).filter(Boolean) : [];
+        setPosList(list.sort(sortPosNames));
+      })
       .catch(() => {});
   }, [serverOk]);
 

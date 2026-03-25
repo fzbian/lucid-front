@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Layout from "../components/Layout";
 import ServerDown from "../components/ServerDown";
@@ -8,6 +8,30 @@ import { getSession, getUsers, getSessionUsername } from "../auth";
 import useTitle from "../useTitle";
 import { formatDateTimeCO } from "../dateFormat";
 import useTimeout from "../useTimeout";
+
+function sortLocalesByName(a, b) {
+  return String(a?.[0] || '').localeCompare(String(b?.[0] || ''), 'es', { sensitivity: 'base' });
+}
+
+const DASHBOARD_HIDDEN_LOCALES_KEY = 'atm_dashboard_hidden_locales';
+
+function readHiddenLocalesPreference() {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(DASHBOARD_HIDDEN_LOCALES_KEY);
+    const parsed = JSON.parse(raw || '[]');
+    return Array.isArray(parsed) ? parsed.map((value) => String(value || '').trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistHiddenLocalesPreference(hiddenLocales) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(DASHBOARD_HIDDEN_LOCALES_KEY, JSON.stringify(hiddenLocales));
+  } catch { }
+}
 
 // Helper para agrupar movimientos por fecha (Hoy, Ayer, fecha completa)
 function groupTransactionsByDate(movs) {
@@ -48,6 +72,9 @@ export default function Dashboard() {
   const [displayName, setDisplayName] = useState("");
   const [showSaldoTotal, setShowSaldoTotal] = useState(true);
   const [showLocales, setShowLocales] = useState(true);
+  const [hiddenLocales, setHiddenLocales] = useState(() => readHiddenLocalesPreference());
+  const [showLocaleConfig, setShowLocaleConfig] = useState(false);
+  const [localeConfigDraft, setLocaleConfigDraft] = useState([]);
   const [serverOk, setServerOk] = useState(null);
   const [checking, setChecking] = useState(true);
   const [nowCo] = useState(new Date());
@@ -56,15 +83,35 @@ export default function Dashboard() {
   useTitle("Dashboard · ATM Ricky Rich");
 
   // Derivados de caja para locales (se recalculan en render)
-  const localesList = caja?.locales ? Object.entries(caja.locales) : [];
-  const totalLocalesSaldo = typeof caja?.total_locales === 'number'
-    ? caja.total_locales
-    : localesList.reduce((acc, [, l]) => acc + (Number(l?.saldo_en_caja) || 0), 0);
-  const totalLocalesVendido = localesList.reduce((acc, [, l]) => acc + (Number(l?.vendido) || 0), 0);
+  const localesList = useMemo(
+    () => (caja?.locales ? Object.entries(caja.locales).sort(sortLocalesByName) : []),
+    [caja]
+  );
+  const localeNames = useMemo(() => localesList.map(([nombre]) => nombre), [localesList]);
+  const visibleLocalesList = useMemo(
+    () => localesList.filter(([nombre]) => !hiddenLocales.includes(nombre)),
+    [localesList, hiddenLocales]
+  );
+  const totalLocalesSaldo = visibleLocalesList.reduce((acc, [, l]) => acc + (Number(l?.saldo_en_caja) || 0), 0);
+  const totalLocalesVendido = visibleLocalesList.reduce((acc, [, l]) => acc + (Number(l?.vendido) || 0), 0);
 
   const timedOutChecking = useTimeout(checking, 10000);
   const timedOutCaja = useTimeout(loading && serverOk === true, 10000);
   const timedOutMovs = useTimeout(loadingMovs && serverOk === true, 10000);
+
+  useEffect(() => {
+    setHiddenLocales((prev) => {
+      const validNames = new Set(localeNames);
+      const next = prev.filter((name) => validNames.has(name));
+      if (next.length === prev.length) return prev;
+      persistHiddenLocalesPreference(next);
+      return next;
+    });
+  }, [localeNames]);
+
+  useEffect(() => {
+    persistHiddenLocalesPreference(hiddenLocales);
+  }, [hiddenLocales]);
 
   const reloadCaja = async () => {
     setLoading(true);
@@ -359,17 +406,38 @@ export default function Dashboard() {
         {/* Locales */}
         <section className="bg-[var(--card-color)] rounded-2xl p-4 border border-[var(--border-color)] shadow">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-2xl font-bold flex items-center gap-2">
-              <span className="material-symbols-outlined" aria-hidden>storefront</span>
-              Locales
-            </h2>
-            <button
-              type="button"
-              onClick={() => setShowLocales(v => !v)}
-              className="p-2 rounded-lg hover:bg-white/5"
-            >
-              <span className="material-symbols-outlined">{showLocales ? 'visibility' : 'visibility_off'}</span>
-            </button>
+            <div>
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                <span className="material-symbols-outlined" aria-hidden>storefront</span>
+                Locales
+              </h2>
+              {!loading && !checking && !error && (
+                <p className="mt-1 text-xs text-[var(--text-secondary-color)]">
+                  Mostrando {visibleLocalesList.length} de {localesList.length} locales
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setLocaleConfigDraft(hiddenLocales.filter((name) => localeNames.includes(name)));
+                  setShowLocaleConfig(true);
+                }}
+                className="p-2 rounded-lg hover:bg-white/5"
+                title="Configurar locales visibles"
+              >
+                <span className="material-symbols-outlined">settings</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLocales(v => !v)}
+                className="p-2 rounded-lg hover:bg-white/5"
+                title={showLocales ? 'Ocultar montos' : 'Mostrar montos'}
+              >
+                <span className="material-symbols-outlined">{showLocales ? 'visibility' : 'visibility_off'}</span>
+              </button>
+            </div>
           </div>
 
           {loading || checking ? (
@@ -385,11 +453,15 @@ export default function Dashboard() {
             )
           ) : error ? (
             <p className="text-red-600">{error}</p>
+          ) : visibleLocalesList.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[var(--border-color)] bg-[var(--dark-color)]/40 px-4 py-6 text-center">
+              <p className="text-sm font-medium">No hay locales seleccionados para mostrar.</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary-color)]">Usa el icono de configuración para elegir cuáles quieres ver en el dashboard.</p>
+            </div>
           ) : (
             <div className="space-y-3">
               <ul className="flex flex-col gap-2">
-                {localesList.map(([nombre, info]) => {
-                  const nombreFormateado = nombre.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                {visibleLocalesList.map(([nombre, info]) => {
                   const saldo = Number(info?.saldo_en_caja) || 0;
                   const vendido = Number(info?.vendido) || 0;
                   const estado = (info?.estado_sesion || '').toLowerCase();
@@ -400,7 +472,7 @@ export default function Dashboard() {
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-semibold flex items-center gap-1">
                           <span className="material-symbols-outlined !text-base">store</span>
-                          {nombreFormateado}
+                          {nombre}
                         </span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full border ${estadoBadge}`}>
                           {estado ? estado.charAt(0).toUpperCase() + estado.slice(1) : '—'}
@@ -420,7 +492,7 @@ export default function Dashboard() {
                       </div>
                       <div className="pt-2 border-t border-white/5">
                         <button
-                          onClick={() => estado === 'abierta' && navigate(`/cashout?pos=${encodeURIComponent(nombreFormateado)}`)}
+                          onClick={() => estado === 'abierta' && navigate(`/cashout?pos=${encodeURIComponent(nombre)}`)}
                           disabled={estado !== 'abierta'}
                           className={`w-full py-2 rounded-lg text-xs font-medium flex items-center justify-center gap-2 transition-colors ${estado === 'abierta'
                             ? 'bg-white/5 hover:bg-white/10 border border-white/5 text-[var(--primary-color)]'
@@ -511,6 +583,117 @@ export default function Dashboard() {
         </section>
 
       </div>
+
+      {showLocaleConfig && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4"
+          onClick={() => setShowLocaleConfig(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl border border-[var(--border-color)] bg-[var(--card-color)] shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Configurar locales visibles"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--border-color)] px-5 py-4">
+              <div>
+                <h3 className="text-lg font-semibold">Locales visibles</h3>
+                <p className="text-xs text-[var(--text-secondary-color)]">
+                  Selecciona los locales que quieres ver en el dashboard.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLocaleConfig(false)}
+                className="rounded-lg p-2 text-[var(--text-secondary-color)] hover:bg-white/5"
+                aria-label="Cerrar configuración"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="space-y-4 px-5 py-4">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLocaleConfigDraft([])}
+                  className="rounded-full border border-[var(--border-color)] px-3 py-1.5 text-xs font-medium hover:bg-white/5"
+                >
+                  Mostrar todos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocaleConfigDraft([...localeNames])}
+                  className="rounded-full border border-[var(--border-color)] px-3 py-1.5 text-xs font-medium hover:bg-white/5"
+                >
+                  Ocultar todos
+                </button>
+              </div>
+
+              <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+                {localesList.map(([nombre, info]) => {
+                  const checked = !localeConfigDraft.includes(nombre);
+                  const estado = String(info?.estado_sesion || '').toLowerCase();
+                  return (
+                    <label
+                      key={nombre}
+                      className={`flex items-center justify-between gap-3 rounded-2xl border px-3 py-3 transition-colors ${checked
+                        ? 'border-[var(--primary-color)]/30 bg-[var(--primary-color)]/8'
+                        : 'border-[var(--border-color)] bg-[var(--dark-color)]/30'
+                        }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">{nombre}</div>
+                        <div className="text-[11px] text-[var(--text-secondary-color)]">
+                          Estado: {estado ? estado.charAt(0).toUpperCase() + estado.slice(1) : 'Sin sesión'}
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setLocaleConfigDraft((prev) => (
+                            prev.includes(nombre)
+                              ? prev.filter((item) => item !== nombre)
+                              : [...prev, nombre]
+                          ));
+                        }}
+                        className="h-4 w-4 accent-[var(--primary-color)]"
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t border-[var(--border-color)] px-5 py-4">
+              <p className="text-xs text-[var(--text-secondary-color)]">
+                {localeNames.length - localeConfigDraft.length} locale(s) visibles
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLocaleConfig(false)}
+                  className="rounded-xl border border-[var(--border-color)] px-4 py-2 text-sm font-medium hover:bg-white/5"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHiddenLocales(localeConfigDraft.filter((name) => localeNames.includes(name)));
+                    setShowLocaleConfig(false);
+                  }}
+                  className="rounded-xl bg-[var(--primary-color)] px-4 py-2 text-sm font-semibold text-white hover:brightness-110"
+                >
+                  Guardar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

@@ -10,6 +10,10 @@ import { formatCLP } from '../formatMoney';
 import { getSessionUsername, getUsers } from '../auth';
 import { useNotifications } from '../components/Notifications';
 
+function sortLocalesByLabel(a, b) {
+  return String(a?.label || '').localeCompare(String(b?.label || ''), 'es', { sensitivity: 'base' });
+}
+
 export default function CashoutPOS() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -73,14 +77,14 @@ export default function CashoutPOS() {
   const localesList = useMemo(() => {
     if (!cajaData?.locales) return [];
     return Object.entries(cajaData.locales).map(([key, info]) => {
-      const label = key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      const label = String(key || '').trim();
       const estado = String(info?.estado_sesion || '').toLowerCase();
       const estadoLabel = estado ? estado.charAt(0).toUpperCase() + estado.slice(1) : '—';
       const estadoBadge = estado === 'abierta'
         ? 'border-green-500/40 bg-green-500/10 text-green-200'
         : 'border-white/15 bg-white/5 text-white/70';
       return {
-        value: label,
+        value: key,
         label,
         saldo: Number(info?.saldo_en_caja) || 0,
         vendido: Number(info?.vendido) || 0,
@@ -88,7 +92,7 @@ export default function CashoutPOS() {
         estadoLabel,
         estadoBadge,
       };
-    });
+    }).sort(sortLocalesByLabel);
   }, [cajaData]);
 
   const selectedLocal = useMemo(() => localesList.find(l => l.value === posName), [localesList, posName]);

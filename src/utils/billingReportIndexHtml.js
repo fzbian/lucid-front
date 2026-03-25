@@ -25,28 +25,34 @@ function formatMoneyOrDash(value, { showZero = false } = {}) {
     return formatCLP(Math.round(n));
 }
 
-function normalizeRows(rawRows) {
-    return (Array.isArray(rawRows) ? rawRows : []).map((row) => {
-        const posName = row?.posName || row?.pos_name || 'Sin nombre';
-        const venta = toNumber(row?.venta);
-        const margen = toNumber(row?.margen);
-        const gastos = toNumber(row?.gastosTot ?? row?.gastos_tot ?? row?.gastos);
-        const utilidad = toNumber(row?.utilBruta ?? row?.utilidad ?? (margen - gastos));
-        const comision = toNumber(row?.comision);
-        const utilidadNeta = toNumber(row?.utilNeta ?? row?.utilidadNeta ?? (utilidad - comision));
-        const margenPct = venta > 0 ? (margen / venta) * 100 : 0;
+function sortPosNames(a, b) {
+    return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
+}
 
-        return {
-            posName,
-            venta,
-            margen,
-            margenPct,
-            gastos,
-            utilidad,
-            comision,
-            utilidadNeta,
-        };
-    });
+function normalizeRows(rawRows) {
+    return (Array.isArray(rawRows) ? rawRows : [])
+        .map((row) => {
+            const posName = row?.posName || row?.pos_name || 'Sin nombre';
+            const venta = toNumber(row?.venta);
+            const margen = toNumber(row?.margen);
+            const gastos = toNumber(row?.gastosTot ?? row?.gastos_tot ?? row?.gastos);
+            const utilidad = toNumber(row?.utilBruta ?? row?.utilidad ?? (margen - gastos));
+            const comision = toNumber(row?.comision);
+            const utilidadNeta = toNumber(row?.utilNeta ?? row?.utilidadNeta ?? (utilidad - comision));
+            const margenPct = venta > 0 ? (margen / venta) * 100 : 0;
+
+            return {
+                posName,
+                venta,
+                margen,
+                margenPct,
+                gastos,
+                utilidad,
+                comision,
+                utilidadNeta,
+            };
+        })
+        .sort((a, b) => sortPosNames(a.posName, b.posName));
 }
 
 function buildSummary(rows) {
@@ -286,4 +292,3 @@ export function openBillingReportIndex({ year, monthName, rows }) {
         URL.revokeObjectURL(blobUrl);
     }, 60_000);
 }
-
