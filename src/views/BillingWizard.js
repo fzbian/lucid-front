@@ -43,6 +43,10 @@ function sortPosNames(a, b) {
     return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
 }
 
+function hasNumericDifference(a, b) {
+    return Math.abs(toNumber(a) - toNumber(b)) > 0.009;
+}
+
 export default function BillingWizard() {
     const { notify } = useNotifications();
     const navigate = useNavigate();
@@ -72,6 +76,8 @@ export default function BillingWizard() {
     const [nominaActionLoading, setNominaActionLoading] = useState(null); // { userId, action: 'assign'|'unassign' } or null
     const [reportLocaleMap, setReportLocaleMap] = useState({}); // { posName: includedBool }
     const [commissionPctByPos, setCommissionPctByPos] = useState({}); // { posName: pctSum }
+    const [manualReportDraft, setManualReportDraft] = useState({});
+    const [savingManualReport, setSavingManualReport] = useState(false);
 
     // Fixed costs grouped by POS
     const fixedCostsByPos = {};
@@ -94,6 +100,18 @@ export default function BillingWizard() {
     // Report data keyed by POS
     const reportByPos = {};
     reportData.forEach(e => { reportByPos[e.pos_name] = e; });
+
+    useEffect(() => {
+        const next = {};
+        (reportData || []).forEach((entry) => {
+            if (!entry?.pos_name) return;
+            next[entry.pos_name] = {
+                venta: String(toNumber(entry.venta)),
+                margen: String(toNumber(entry.margen)),
+            };
+        });
+        setManualReportDraft(next);
+    }, [reportData]);
 
     // --- DATA LOADING ---
 
@@ -450,11 +468,111 @@ export default function BillingWizard() {
         return reportEntry?.comision_porcentaje || 0;
     };
 
+    const getEditableReportState = (pos) => {
+        const entry = reportByPos[pos] || {};
+        const draft = manualReportDraft[pos] || {};
+        const ventaOdoo = toNumber(entry.venta_odoo ?? entry.venta);
+        const margenOdoo = toNumber(entry.margen_odoo ?? entry.margen);
+        const ventaInput = draft.venta ?? String(toNumber(entry.venta));
+        const margenInput = draft.margen ?? String(toNumber(entry.margen));
+        const venta = toNumber(ventaInput);
+        const margen = toNumber(margenInput);
+        const ventaManual = hasNumericDifference(venta, ventaOdoo);
+        const margenManual = hasNumericDifference(margen, margenOdoo);
+        const dirty = hasNumericDifference(venta, entry.venta) ||
+            hasNumericDifference(margen, entry.margen) ||
+            ventaManual !== (entry.venta_manual === true) ||
+            margenManual !== (entry.margen_manual === true);
+
+        return {
+            ventaInput,
+            margenInput,
+            venta,
+            margen,
+            ventaOdoo,
+            margenOdoo,
+            ventaManual,
+            margenManual,
+            dirty,
+        };
+    };
+
+    const setEditableReportValue = (pos, field, value) => {
+        setManualReportDraft((prev) => ({
+            ...prev,
+            [pos]: {
+                venta: prev[pos]?.venta ?? String(toNumber(reportByPos[pos]?.venta)),
+                margen: prev[pos]?.margen ?? String(toNumber(reportByPos[pos]?.margen)),
+                [field]: value,
+            },
+        }));
+    };
+
+    const buildManualAdjustmentEntry = (pos, source) => {
+        const entry = reportByPos[pos] || {};
+        const state = source || getEditableReportState(pos);
+        return {
+            pos_name: pos,
+            venta: state.venta,
+            margen: state.margen,
+            venta_manual: state.ventaManual,
+            margen_manual: state.margenManual,
+            dirty: state.dirty || state.ventaManual !== (entry.venta_manual === true) || state.margenManual !== (entry.margen_manual === true),
+        };
+    };
+
+    const saveManualAdjustments = useCallback(async (entries, successMessage) => {
+        const payloadEntries = (entries || []).filter((entry) => entry?.dirty).map(({ dirty, ...rest }) => rest);
+        if (!payloadEntries.length) return true;
+
+        setSavingManualReport(true);
+        try {
+            const res = await apiFetch('/api/billing/monthly', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    year,
+                    month,
+                    entries: payloadEntries,
+                }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'No se pudieron guardar los ajustes manuales');
+            }
+            await loadReportData();
+            if (successMessage) {
+                notify({ type: 'success', message: successMessage });
+            }
+            return true;
+        } catch (e) {
+            notify({ type: 'error', message: e.message || 'Error guardando ajustes manuales' });
+            return false;
+        } finally {
+            setSavingManualReport(false);
+        }
+    }, [loadReportData, month, notify, year]);
+
+    const handleSaveManualAdjustments = async () => {
+        const entries = allPosNames.map((pos) => buildManualAdjustmentEntry(pos)).filter((entry) => entry.dirty);
+        return saveManualAdjustments(entries, 'Ajustes de venta y margen guardados.');
+    };
+
+    const proceedToConfirm = async () => {
+        const entries = allPosNames.map((pos) => buildManualAdjustmentEntry(pos)).filter((entry) => entry.dirty);
+        if (entries.length > 0) {
+            const ok = await saveManualAdjustments(entries, 'Ajustes guardados antes de confirmar.');
+            if (!ok) return;
+        }
+        setStep(4);
+    };
+
     const buildRowsForPdfExport = () => {
         return allPosNames.map((pos) => {
             const e = reportByPos[pos] || {};
-            const venta = e.venta || 0;
-            const margen = e.margen || 0;
+            const editable = getEditableReportState(pos);
+            const venta = editable.venta;
+            const margen = editable.margen;
             const fixedCosts = getFixedCostsTotal(pos);
             const hasLoadedCommon = Array.isArray(commonGastos[pos]);
             const hasLoadedNomina = Boolean(nominaByPos[pos]);
@@ -1025,16 +1143,29 @@ export default function BillingWizard() {
                             <div className="space-y-4">
                                 <div className="text-sm text-[var(--text-secondary-color)] bg-[var(--card-color)] border border-[var(--border-color)] rounded-xl p-3">
                                     <span className="material-symbols-outlined text-[var(--primary-color)] align-middle mr-1">info</span>
-                                    Resumen financiero con datos de Odoo. La columna "Gastos" suma gastos fijos (paso 1) y gastos variables (paso 2).
+                                    Resumen financiero con datos de Odoo. La columna "Gastos" suma gastos fijos (paso 1) y gastos variables (paso 2). Puedes ajustar manualmente venta y margen para este informe antes de confirmarlo.
                                 </div>
-                                <div className="flex justify-end gap-2 flex-wrap">
+                                <div className="flex justify-between gap-2 flex-wrap items-center">
+                                    <div className="text-xs text-[var(--text-secondary-color)]">
+                                        {allPosNames.filter((pos) => buildManualAdjustmentEntry(pos).dirty).length} ajuste(s) pendiente(s) por guardar
+                                    </div>
+                                    <div className="flex justify-end gap-2 flex-wrap">
+                                        <button
+                                            type="button"
+                                            onClick={handleSaveManualAdjustments}
+                                            disabled={savingManualReport || !allPosNames.some((pos) => buildManualAdjustmentEntry(pos).dirty)}
+                                            className="px-4 py-2 bg-emerald-500/20 border border-emerald-400/30 text-emerald-200 rounded-xl text-sm font-bold hover:bg-emerald-500/30 disabled:opacity-50 flex items-center gap-2"
+                                        >
+                                            <span className={`material-symbols-outlined text-sm ${savingManualReport ? 'animate-spin' : ''}`}>save</span>
+                                            {savingManualReport ? 'Guardando...' : 'Guardar ajustes'}
+                                        </button>
                                     <button
                                         type="button"
                                         onClick={handleOpenIndex}
-                                            disabled={openingIndex}
-                                            className="px-4 py-2 bg-indigo-500/20 border border-indigo-400/30 text-indigo-200 rounded-xl text-sm font-bold hover:bg-indigo-500/30 disabled:opacity-50 flex items-center gap-2"
-                                        >
-                                            <span className="material-symbols-outlined text-sm">open_in_new</span>
+                                        disabled={openingIndex}
+                                        className="px-4 py-2 bg-indigo-500/20 border border-indigo-400/30 text-indigo-200 rounded-xl text-sm font-bold hover:bg-indigo-500/30 disabled:opacity-50 flex items-center gap-2"
+                                    >
+                                        <span className="material-symbols-outlined text-sm">open_in_new</span>
                                         {openingIndex ? 'Abriendo index...' : 'Visualizar index'}
                                     </button>
                                     <button
@@ -1046,6 +1177,7 @@ export default function BillingWizard() {
                                         <span className="material-symbols-outlined text-sm">receipt_long</span>
                                         {openingGastosIndex ? 'Abriendo gastos...' : 'Visualizar gastos'}
                                     </button>
+                                    </div>
                                 </div>
 
                                 <div className="overflow-auto bg-[var(--card-color)] border border-[var(--border-color)] rounded-2xl">
@@ -1067,9 +1199,9 @@ export default function BillingWizard() {
                                                 let totV = 0, totM = 0, totG = 0, totUB = 0, totC = 0, totUN = 0;
                                                 const rows = allPosNames.map(pos => {
                                                     const e = reportByPos[pos] || {};
-
-                                                    const venta = e.venta || 0;
-                                                    const margen = e.margen || 0;
+                                                    const editable = getEditableReportState(pos);
+                                                    const venta = editable.venta;
+                                                    const margen = editable.margen;
                                                     const fixedCosts = getFixedCostsTotal(pos);
                                                     const hasLoadedCommon = Array.isArray(commonGastos[pos]);
                                                     const hasLoadedNomina = Boolean(nominaByPos[pos]);
@@ -1087,9 +1219,49 @@ export default function BillingWizard() {
 
                                                     return (
                                                         <tr key={pos} className="hover:bg-white/5">
-                                                            <td className="p-3 font-medium text-sm">{pos}</td>
-                                                            <td className="p-3 text-right font-mono text-sm">{venta ? formatCLP(venta) : '-'}</td>
-                                                            <td className="p-3 text-right font-mono text-sm text-blue-200">{margen ? formatCLP(margen) : '-'}</td>
+                                                            <td className="p-3 font-medium text-sm">
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span>{pos}</span>
+                                                                    {(editable.ventaManual || editable.margenManual || editable.dirty) && (
+                                                                        <div className="flex flex-wrap gap-1 text-[10px]">
+                                                                            {(editable.ventaManual || editable.margenManual) && (
+                                                                                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-200 border border-amber-400/20">Manual</span>
+                                                                            )}
+                                                                            {editable.dirty && (
+                                                                                <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200 border border-sky-400/20">Sin guardar</span>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </td>
+                                                            <td className="p-3 text-right">
+                                                                <div className="flex flex-col items-end gap-1">
+                                                                    <input
+                                                                        type="number"
+                                                                        step="any"
+                                                                        value={editable.ventaInput}
+                                                                        onChange={(event) => setEditableReportValue(pos, 'venta', event.target.value)}
+                                                                        className="w-32 text-right bg-[var(--dark-color)] border border-[var(--border-color)] rounded-lg px-2 py-1 font-mono text-sm"
+                                                                    />
+                                                                    <span className="text-[10px] text-[var(--text-secondary-color)]">
+                                                                        Odoo: {formatCLP(editable.ventaOdoo)}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="p-3 text-right">
+                                                                <div className="flex flex-col items-end gap-1">
+                                                                    <input
+                                                                        type="number"
+                                                                        step="any"
+                                                                        value={editable.margenInput}
+                                                                        onChange={(event) => setEditableReportValue(pos, 'margen', event.target.value)}
+                                                                        className="w-32 text-right bg-[var(--dark-color)] border border-[var(--border-color)] rounded-lg px-2 py-1 font-mono text-sm text-blue-200"
+                                                                    />
+                                                                    <span className="text-[10px] text-[var(--text-secondary-color)]">
+                                                                        Odoo: {formatCLP(editable.margenOdoo)}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
                                                             <td className="p-3 text-right font-mono text-sm text-[var(--text-secondary-color)]">
                                                                 <div title={`Fijos: ${formatCLP(fixedCosts)} | Variables: ${formatCLP(variableCosts)} (Comunes: ${formatCLP(gastosComunes)} + Nómina: ${formatCLP(nomina)})`}>
                                                                     {gastosTot ? formatCLP(gastosTot) : '-'}
@@ -1273,10 +1445,11 @@ export default function BillingWizard() {
                             )}
                             {step === 3 && (
                                 <button
-                                    onClick={() => setStep(4)}
-                                    className="px-4 py-2 bg-green-600 text-white rounded-xl font-bold hover:brightness-110 flex items-center gap-2"
+                                    onClick={proceedToConfirm}
+                                    disabled={savingManualReport}
+                                    className="px-4 py-2 bg-green-600 text-white rounded-xl font-bold hover:brightness-110 disabled:opacity-50 flex items-center gap-2"
                                 >
-                                    Proceder a confirmar
+                                    {savingManualReport ? 'Guardando ajustes...' : 'Proceder a confirmar'}
                                     <span className="material-symbols-outlined text-sm">arrow_forward</span>
                                 </button>
                             )}
