@@ -11,6 +11,7 @@ import { getSessionUsername, getUsers, isAuthenticated } from "../auth";
 import { notifyMutation } from "../mutations";
 import { useNotifications } from "../components/Notifications";
 import { formatCLP } from "../formatMoney";
+import { listClients } from "../carteraApi";
 
 function sortPosNames(a, b) {
   return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
@@ -34,6 +35,10 @@ export default function NewTransaction() {
   const [categoriaId, setCategoriaId] = useState("");
   const [cajaId, setCajaId] = useState(1); // 1=Efectivo, 2=Cuenta bancaria
   const [local, setLocal] = useState(""); // POS name para gastos operativos
+  const [carteraClienteId, setCarteraClienteId] = useState("");
+  const [carteraClients, setCarteraClients] = useState([]);
+  const [loadingCarteraClients, setLoadingCarteraClients] = useState(false);
+  const [errorCarteraClients, setErrorCarteraClients] = useState(null);
   const [posList, setPosList] = useState([]);
 
   // ... (lines 32-181 unchanged) ...
@@ -128,9 +133,33 @@ export default function NewTransaction() {
       .catch(() => {});
   }, [serverOk]);
 
+  useEffect(() => {
+    if (serverOk !== true) return;
+    let ignore = false;
+    setLoadingCarteraClients(true);
+    setErrorCarteraClients(null);
+    listClients()
+      .then((data) => {
+        if (ignore) return;
+        setCarteraClients(Array.isArray(data) ? data : []);
+        setLoadingCarteraClients(false);
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setErrorCarteraClients(err?.message || "No se pudieron cargar los clientes de cartera");
+        setLoadingCarteraClients(false);
+      });
+    return () => { ignore = true; };
+  }, [serverOk]);
+
   // Check if selected category is gastos operativos
   const selectedCat = useMemo(() => cats.find(c => c.id === Number(categoriaId)), [cats, categoriaId]);
   const isGastoOperativo = selectedCat?.is_gasto_operativo === true;
+  const isCarteraClientes = selectedCat?.is_cartera_clientes === true;
+  const selectedCarteraClient = useMemo(
+    () => carteraClients.find((item) => String(item.id) === String(carteraClienteId)) || null,
+    [carteraClienteId, carteraClients]
+  );
 
   const filteredCats = useMemo(() => {
     const list = cats.filter((c) => c.tipo === tipo);
@@ -153,6 +182,7 @@ export default function NewTransaction() {
     if (step === 4) {
       const missing = [];
       if (isGastoOperativo && !local) missing.push('Punto de Venta');
+      if (isCarteraClientes && !carteraClienteId) missing.push('Cliente de cartera');
       if (!(Number(monto) > 0)) missing.push('Monto (> 0)');
       if (!descripcion.trim()) missing.push('Descripción');
       return missing.length ? `Por favor completa: ${missing.join(', ')}.` : null;
@@ -226,6 +256,7 @@ export default function NewTransaction() {
         caja_id: Number(cajaId),
         usuario: usuarioDisplay || getSessionUsername() || "",
         ...(isGastoOperativo && local ? { local } : {}),
+        ...(isCarteraClientes && carteraClienteId ? { cartera_cliente_id: Number(carteraClienteId) } : {}),
       };
       const res = await apiFetch("/api/transacciones", {
         method: "POST",
@@ -240,10 +271,11 @@ export default function NewTransaction() {
           const solicitado = data && Number.isFinite(Number(data.monto_solicitado)) ? Number(data.monto_solicitado) : Number(monto);
           const saldo = data && Number.isFinite(Number(data.saldo_actual)) ? Number(data.saldo_actual) : null;
           const baseMsg = (data && data.error) ? String(data.error) : (res.status === 409 ? 'Saldo insuficiente en caja para realizar el egreso' : 'Solicitud inválida');
+          const isSaldoIssue = res.status === 409 || /saldo/i.test(baseMsg);
           // Mostrar overlay especial amigable
-          setOverlayKind('insufficient');
-          setOverlayTitle(res.status === 409 ? 'Saldo insuficiente' : 'No se pudo crear');
-          setOverlayData({ solicitado, saldo });
+          setOverlayKind(isSaldoIssue ? 'insufficient' : 'info');
+          setOverlayTitle(isSaldoIssue ? 'Saldo insuficiente' : 'No se pudo crear');
+          setOverlayData(isSaldoIssue ? { solicitado, saldo } : null);
           setOverlayMessage(baseMsg);
           setProgressOpen(false);
           setOverlayOpen(true);
@@ -298,6 +330,7 @@ export default function NewTransaction() {
   useEffect(() => {
     setCategoriaId("");
     setLocal("");
+    setCarteraClienteId("");
   }, [tipo]);
 
   return (
@@ -535,6 +568,29 @@ export default function NewTransaction() {
                     <p className="text-[10px] text-amber-400 mt-1 text-center">Se creará un gasto operativo automáticamente para este local</p>
                   </div>
                 )}
+                {isCarteraClientes && (
+                  <div>
+                    <label className="block text-sm text-[var(--text-secondary-color)] mb-1 text-center">Cliente de cartera</label>
+                    <div className="flex items-center gap-2 bg-[var(--dark-color)] border border-[var(--border-color)] rounded-lg px-3">
+                      <span className="material-symbols-outlined text-[var(--text-secondary-color)]">group</span>
+                      <select
+                        value={carteraClienteId}
+                        onChange={(e) => setCarteraClienteId(e.target.value)}
+                        className="flex-1 bg-transparent outline-none py-2 text-sm text-[var(--text-color)]"
+                      >
+                        <option value="">Seleccionar cliente...</option>
+                        {carteraClients.map((client) => (
+                          <option key={client.id} value={client.id}>
+                            {client.nombre}{client.celular ? ` · ${client.celular}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {loadingCarteraClients && <p className="text-[10px] text-white/50 mt-1 text-center">Cargando clientes...</p>}
+                    {errorCarteraClients && <p className="text-[10px] text-red-400 mt-1 text-center">{errorCarteraClients}</p>}
+                    <p className="text-[10px] text-sky-300 mt-1 text-center">Este cliente quedará enlazado al ingreso de cartera.</p>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm text-[var(--text-secondary-color)] mb-1 text-center">Monto</label>
                   <div className="flex items-center gap-2 bg-[var(--dark-color)] border border-[var(--border-color)] rounded-lg px-3">
@@ -639,6 +695,15 @@ export default function NewTransaction() {
                     <p className="text-sm font-medium">{(cats.find(c => c.id === Number(categoriaId)) || {}).nombre || `Cat #${categoriaId}`}</p>
                   </div>
                 </li>
+                {isCarteraClientes && (
+                  <li className="flex items-start gap-3">
+                    <span className="material-symbols-outlined text-[var(--text-secondary-color)]">group</span>
+                    <div>
+                      <p className="text-xs text-[var(--text-secondary-color)]">Cliente de cartera</p>
+                      <p className="text-sm font-medium">{selectedCarteraClient?.nombre || '-'}</p>
+                    </div>
+                  </li>
+                )}
                 <li className="flex items-start gap-3">
                   <span className="material-symbols-outlined text-[var(--text-secondary-color)]">subject</span>
                   <div>

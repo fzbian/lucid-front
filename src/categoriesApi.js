@@ -69,3 +69,16 @@ export async function setGastoOperativo(id, isGastoOperativo) {
     throw new Error(normalizeServerError(txt) || 'Error al configurar gastos operativos');
   }
 }
+
+export async function setCarteraClientes(id, isCarteraClientes) {
+  if (!id) throw new Error('ID requerido');
+  const res = await apiFetch(`/api/categorias/${encodeURIComponent(id)}/set-cartera-clientes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_cartera_clientes: isCarteraClientes })
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(normalizeServerError(txt) || 'Error al configurar cartera de clientes');
+  }
+}

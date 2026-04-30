@@ -89,13 +89,13 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
     const [health, setHealth] = useState(0);
     const [pension, setPension] = useState(0);
 
-    // Configurable Percentages
-    const [healthPercentage, setHealthPercentage] = useState(4.0);
-    const [pensionPercentage, setPensionPercentage] = useState(4.0);
-    const [isEditingHealthPct, setIsEditingHealthPct] = useState(false);
-    const [isEditingPensionPct, setIsEditingPensionPct] = useState(false);
-    const [tempHealthPct, setTempHealthPct] = useState(4.0);
-    const [tempPensionPct, setTempPensionPct] = useState(4.0);
+    // Configurable fixed deductions
+    const [healthValue, setHealthValue] = useState(0);
+    const [pensionValue, setPensionValue] = useState(0);
+    const [isEditingHealthValue, setIsEditingHealthValue] = useState(false);
+    const [isEditingPensionValue, setIsEditingPensionValue] = useState(false);
+    const [tempHealthValue, setTempHealthValue] = useState(0);
+    const [tempPensionValue, setTempPensionValue] = useState(0);
 
     // Step 7: Adjustments
     const [adjustments, setAdjustments] = useState([]); // { type: 'income'|'deduction', label: '', value: 0 }
@@ -170,10 +170,10 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
             // Security Init
             const sec = employee.payroll?.has_security !== undefined ? employee.payroll.has_security : true;
             setIncludesSecurity(sec);
-            setHealthPercentage(config?.porcentaje_salud || 4.0);
-            setTempHealthPct(config?.porcentaje_salud || 4.0);
-            setPensionPercentage(config?.porcentaje_pension || 4.0);
-            setTempPensionPct(config?.porcentaje_pension || 4.0);
+            setHealthValue(Number(config?.valor_salud || 0));
+            setTempHealthValue(Number(config?.valor_salud || 0));
+            setPensionValue(Number(config?.valor_pension || 0));
+            setTempPensionValue(Number(config?.valor_pension || 0));
 
             setCurrentStep(1);
 
@@ -243,7 +243,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                 }
             }
         }
-    }, [isOpen, employee, initialDates, config?.valor_dominical, config?.valor_dominical_s1, config?.valor_dominical_s2, config?.valor_madrugon, config?.porcentaje_salud, config?.porcentaje_pension, billingConfirmed, isDaily]);
+    }, [isOpen, employee, initialDates, config?.valor_dominical, config?.valor_dominical_s1, config?.valor_dominical_s2, config?.valor_madrugon, config?.valor_salud, config?.valor_pension, billingConfirmed, isDaily]);
 
     // Derived Values
     const effectiveDaysWorked = isDaily ? selectedDays.length : 0;
@@ -356,13 +356,13 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
             });
 
             if (res.ok) {
-                if (field === 'porcentaje_salud') {
-                    setHealthPercentage(Number(value));
-                    setIsEditingHealthPct(false);
+                if (field === 'valor_salud') {
+                    setHealthValue(Number(value));
+                    setIsEditingHealthValue(false);
                 }
-                if (field === 'porcentaje_pension') {
-                    setPensionPercentage(Number(value));
-                    setIsEditingPensionPct(false);
+                if (field === 'valor_pension') {
+                    setPensionValue(Number(value));
+                    setIsEditingPensionValue(false);
                 }
                 notify({ type: 'success', message: 'Configuración actualizada correctamente' });
             } else {
@@ -494,15 +494,15 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
         }
     };
     useEffect(() => {
-        // Recalc health/pension when base changes or toggle changes
+        // Recalc fixed deductions when config or toggle changes
         if (includesSecurity) {
-            setHealth(Math.round(paidBase * (healthPercentage / 100)));
-            setPension(Math.round(paidBase * (pensionPercentage / 100)));
+            setHealth(Math.round(Number(healthValue) || 0));
+            setPension(Math.round(Number(pensionValue) || 0));
         } else {
             setHealth(0);
             setPension(0);
         }
-    }, [paidBase, healthPercentage, pensionPercentage, includesSecurity]);
+    }, [healthValue, pensionValue, includesSecurity]);
 
 
 
@@ -1197,7 +1197,7 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                             <div className="grid grid-cols-2 gap-6">
                                 {[
                                     { id: false, label: 'No Aplica', desc: 'No realizar deducciones', icon: 'health_and_safety', color: 'gray' },
-                                    { id: true, label: 'Sí Aplica', desc: 'Calcular Salud y Pensión', icon: 'medical_services', color: 'blue' },
+                                    { id: true, label: 'Sí Aplica', desc: 'Aplicar descuentos fijos de salud y pensión', icon: 'medical_services', color: 'blue' },
                                 ].map(option => (
                                     <div
                                         key={option.label}
@@ -1237,31 +1237,29 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                                             <div className="p-2 bg-blue-500/20 text-blue-400 rounded-xl">
                                                 <span className="material-symbols-outlined">favorite</span>
                                             </div>
-                                            <span className="text-xs font-bold text-[var(--text-secondary-color)] uppercase tracking-widest">Aporte Salud</span>
+                                            <span className="text-xs font-bold text-[var(--text-secondary-color)] uppercase tracking-widest">Valor Salud</span>
                                         </div>
 
                                         <div className="mb-4">
-                                            {isEditingHealthPct ? (
+                                            {isEditingHealthValue ? (
                                                 <div className="flex flex-col gap-2">
                                                     <div className="flex items-center gap-2">
                                                         <input
                                                             type="number"
-                                                            value={tempHealthPct}
-                                                            onChange={e => setTempHealthPct(e.target.value)}
-                                                            className="w-16 bg-[var(--dark-color)] border border-blue-500 rounded px-2 py-1 text-center font-mono focus:outline-none"
+                                                            value={tempHealthValue}
+                                                            onChange={e => setTempHealthValue(e.target.value)}
+                                                            className="w-28 bg-[var(--dark-color)] border border-blue-500 rounded px-2 py-1 text-center font-mono focus:outline-none"
                                                             autoFocus
                                                         />
-                                                        <span className="text-sm font-bold">%</span>
                                                     </div>
                                                     <div className="flex gap-2">
-                                                        <button onClick={() => handleUpdateConfig('porcentaje_salud', tempHealthPct)} className="text-[10px] bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600">Guardar</button>
-                                                        <button onClick={() => { setIsEditingHealthPct(false); setTempHealthPct(healthPercentage); }} className="text-[10px] bg-white/10 px-2 py-1 rounded hover:bg-white/20">Cancelar</button>
+                                                        <button onClick={() => handleUpdateConfig('valor_salud', tempHealthValue)} className="text-[10px] bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600">Guardar</button>
+                                                        <button onClick={() => { setIsEditingHealthValue(false); setTempHealthValue(healthValue); }} className="text-[10px] bg-white/10 px-2 py-1 rounded hover:bg-white/20">Cancelar</button>
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <div className="flex items-baseline gap-2 cursor-pointer group/edit" onClick={() => setIsEditingHealthPct(true)}>
-                                                    <span className="text-4xl font-black text-white group-hover/edit:text-blue-400 transition-colors">{healthPercentage}</span>
-                                                    <span className="text-sm font-bold opacity-50">%</span>
+                                                <div className="flex items-baseline gap-2 cursor-pointer group/edit" onClick={() => setIsEditingHealthValue(true)}>
+                                                    <span className="text-3xl font-black text-white group-hover/edit:text-blue-400 transition-colors">{formatCLP(healthValue)}</span>
                                                     <span className="material-symbols-outlined text-[10px] opacity-0 group-hover/edit:opacity-50 ml-1">edit</span>
                                                 </div>
                                             )}
@@ -1281,31 +1279,29 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                                             <div className="p-2 bg-purple-500/20 text-purple-400 rounded-xl">
                                                 <span className="material-symbols-outlined">elderly</span>
                                             </div>
-                                            <span className="text-xs font-bold text-[var(--text-secondary-color)] uppercase tracking-widest">Aporte Pensión</span>
+                                            <span className="text-xs font-bold text-[var(--text-secondary-color)] uppercase tracking-widest">Valor Pensión</span>
                                         </div>
 
                                         <div className="mb-4">
-                                            {isEditingPensionPct ? (
+                                            {isEditingPensionValue ? (
                                                 <div className="flex flex-col gap-2">
                                                     <div className="flex items-center gap-2">
                                                         <input
                                                             type="number"
-                                                            value={tempPensionPct}
-                                                            onChange={e => setTempPensionPct(e.target.value)}
-                                                            className="w-16 bg-[var(--dark-color)] border border-purple-500 rounded px-2 py-1 text-center font-mono focus:outline-none"
+                                                            value={tempPensionValue}
+                                                            onChange={e => setTempPensionValue(e.target.value)}
+                                                            className="w-28 bg-[var(--dark-color)] border border-purple-500 rounded px-2 py-1 text-center font-mono focus:outline-none"
                                                             autoFocus
                                                         />
-                                                        <span className="text-sm font-bold">%</span>
                                                     </div>
                                                     <div className="flex gap-2">
-                                                        <button onClick={() => handleUpdateConfig('porcentaje_pension', tempPensionPct)} className="text-[10px] bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-600">Guardar</button>
-                                                        <button onClick={() => { setIsEditingPensionPct(false); setTempPensionPct(pensionPercentage); }} className="text-[10px] bg-white/10 px-2 py-1 rounded hover:bg-white/20">Cancelar</button>
+                                                        <button onClick={() => handleUpdateConfig('valor_pension', tempPensionValue)} className="text-[10px] bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-600">Guardar</button>
+                                                        <button onClick={() => { setIsEditingPensionValue(false); setTempPensionValue(pensionValue); }} className="text-[10px] bg-white/10 px-2 py-1 rounded hover:bg-white/20">Cancelar</button>
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <div className="flex items-baseline gap-2 cursor-pointer group/edit" onClick={() => setIsEditingPensionPct(true)}>
-                                                    <span className="text-4xl font-black text-white group-hover/edit:text-purple-400 transition-colors">{pensionPercentage}</span>
-                                                    <span className="text-sm font-bold opacity-50">%</span>
+                                                <div className="flex items-baseline gap-2 cursor-pointer group/edit" onClick={() => setIsEditingPensionValue(true)}>
+                                                    <span className="text-3xl font-black text-white group-hover/edit:text-purple-400 transition-colors">{formatCLP(pensionValue)}</span>
                                                     <span className="material-symbols-outlined text-[10px] opacity-0 group-hover/edit:opacity-50 ml-1">edit</span>
                                                 </div>
                                             )}
@@ -1483,11 +1479,11 @@ export default function PayrollWizard({ isOpen, onClose, employee, config, onCon
                                     <div className="border-t border-[var(--border-color)] my-2"></div>
 
                                     <div className="flex justify-between text-[var(--danger-color)]">
-                                        <span>Salud (4%)</span>
+                                        <span>Salud</span>
                                         <span className="font-mono">-{formatCLP(health)}</span>
                                     </div>
                                     <div className="flex justify-between text-[var(--danger-color)]">
-                                        <span>Pensión (4%)</span>
+                                        <span>Pensión</span>
                                         <span className="font-mono">-{formatCLP(pension)}</span>
                                     </div>
                                     {advance > 0 && (

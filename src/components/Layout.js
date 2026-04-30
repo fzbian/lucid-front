@@ -3,7 +3,7 @@ import Header from "./Header";
 import Sidebar from "./Sidebar";
 // import { useNavigate } from "react-router-dom"; // Not needed directly if Sidebar handles nav
 
-export default function Layout({ children, title, titleImage, titleImageClass, ...headerProps }) {
+export default function Layout({ children, title, titleImage, titleImageClass, fullWidth = false, ...headerProps }) {
     const [sidebarOpen, setSidebarOpen] = useState(false);
 
     return (
@@ -24,7 +24,7 @@ export default function Layout({ children, title, titleImage, titleImageClass, .
                 />
 
                 {/* Scrollable Page Content */}
-                <main className="flex-1 p-4 pb-8 lg:pb-8 lg:p-8 animate-fade-in relative">
+                <main className={`flex-1 animate-fade-in relative ${fullWidth ? 'px-3 pb-8 pt-4 lg:px-5 lg:pb-8 lg:pt-6 xl:px-6' : 'p-4 pb-8 lg:pb-8 lg:p-8'}`}>
                     {children}
                 </main>
             </div>

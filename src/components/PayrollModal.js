@@ -28,13 +28,8 @@ export default function PayrollModal({ isOpen, onClose, employee, config, onConf
     // Dominicales
     const totalDominicales = sundays * valorDominical;
 
-    // Deducciones (4% Salud, 4% Pension) sobre el Devengado Base (sin auxilio)
-    // Devengado Base = paidBase + totalDominicales ? O solo paidBase?
-    // Usualmente salud/pension es sobre (Salario + Horas Extras + Recargos)
-    // Asumiremos que dominicales hacen parte de la base para seguridad social.
-    const baseCotizacion = paidBase + totalDominicales;
-    const health = Math.round(baseCotizacion * 0.04);
-    const pension = Math.round(baseCotizacion * 0.04);
+    const health = Math.round(Number(config?.valor_salud || 0));
+    const pension = Math.round(Number(config?.valor_pension || 0));
 
     // Total
     const totalPay = (paidBase + paidTransport + totalDominicales) - (health + pension) - advance;
@@ -111,11 +106,11 @@ export default function PayrollModal({ isOpen, onClose, employee, config, onConf
                         <h4 className="text-sm font-semibold text-[var(--text-secondary-color)] uppercase">Deducciones</h4>
                         <div className="grid grid-cols-2 gap-4 text-sm">
                             <div className="flex justify-between">
-                                <span>Salud (4%)</span>
+                                <span>Salud</span>
                                 <span className="text-[var(--danger-color)]">- {formatCLP(health)}</span>
                             </div>
                             <div className="flex justify-between">
-                                <span>Pensión (4%)</span>
+                                <span>Pensión</span>
                                 <span className="text-[var(--danger-color)]">- {formatCLP(pension)}</span>
                             </div>
                         </div>

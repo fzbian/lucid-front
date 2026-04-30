@@ -7,6 +7,7 @@ import ClientInvoices from './views/ClientInvoices';
 import CreateInvoiceWizard from './views/CreateInvoiceWizard';
 import CreateAbonoWizard from './views/CreateAbonoWizard';
 import InvoiceAbonos from './views/InvoiceAbonos';
+import DesktopOnlyCartera from './components/DesktopOnlyCartera';
 import Reports from './views/Reports';
 import Login from './views/Login';
 import { isAuthenticated } from './auth';
@@ -16,6 +17,7 @@ import CashoutPOS from './views/CashoutPOS';
 import BankWithdrawal from './views/BankWithdrawal';
 import Gastos from './views/Gastos';
 import Pedidos from './views/Pedidos';
+import POSSessions from './views/POSSessions';
 import Payroll from './views/Payroll';
 import Billing from './views/Billing';
 import BillingWizard from './views/BillingWizard';
@@ -50,15 +52,18 @@ function App() {
         <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
         <Route path="/movements" element={<RequireAuth><Movements /></RequireAuth>} />
         <Route path="/new" element={<RequireAuth><NewTransaction /></RequireAuth>} />
-        <Route path="/wallet" element={<RequireAuth><Wallet /></RequireAuth>} />
-        <Route path="/wallet/client/:id/invoices" element={<RequireAuth><ClientInvoices /></RequireAuth>} />
-        <Route path="/wallet/client/:id/invoices/new" element={<RequireAuth><CreateInvoiceWizard /></RequireAuth>} />
-        <Route path="/wallet/client/:id/abonos/new" element={<RequireAuth><CreateAbonoWizard /></RequireAuth>} />
-        <Route path="/wallet/client/:clientId/invoices/:invoiceId/abonos" element={<RequireAuth><InvoiceAbonos /></RequireAuth>} />
+        <Route path="/wallet" element={<RequireAuth><DesktopOnlyCartera><Wallet /></DesktopOnlyCartera></RequireAuth>} />
+        <Route path="/wallet/client/:id/invoices" element={<RequireAuth><DesktopOnlyCartera><ClientInvoices /></DesktopOnlyCartera></RequireAuth>} />
+        <Route path="/wallet/client/:id/invoices/new" element={<RequireAuth><DesktopOnlyCartera><CreateInvoiceWizard /></DesktopOnlyCartera></RequireAuth>} />
+        <Route path="/wallet/client/:id/invoices/:invoiceId/edit" element={<RequireAuth><DesktopOnlyCartera><CreateInvoiceWizard /></DesktopOnlyCartera></RequireAuth>} />
+        <Route path="/wallet/client/:id/abonos/new" element={<RequireAuth><DesktopOnlyCartera><CreateAbonoWizard /></DesktopOnlyCartera></RequireAuth>} />
+        <Route path="/wallet/client/:id/abonos/:abonoId/edit" element={<RequireAuth><DesktopOnlyCartera><CreateAbonoWizard /></DesktopOnlyCartera></RequireAuth>} />
+        <Route path="/wallet/client/:clientId/invoices/:invoiceId/abonos" element={<RequireAuth><DesktopOnlyCartera><InvoiceAbonos /></DesktopOnlyCartera></RequireAuth>} />
         <Route path="/cashout" element={<RequireAuth><CashoutPOS /></RequireAuth>} />
         <Route path="/cashout-bank" element={<RequireAuth><BankWithdrawal /></RequireAuth>} />
         <Route path="/gastos" element={<RequireAuth><Gastos /></RequireAuth>} />
         <Route path="/pedidos" element={<RequireAuth><Pedidos /></RequireAuth>} />
+        <Route path="/pos-sessions" element={<RequireAuth><POSSessions /></RequireAuth>} />
         <Route path="/payroll" element={<RequireAuth><Payroll /></RequireAuth>} />
         <Route path="/billing" element={<RequireAuth><Billing /></RequireAuth>} />
         <Route path="/billing/generate" element={<RequireAuth><BillingWizard /></RequireAuth>} />

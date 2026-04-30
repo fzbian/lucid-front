@@ -1407,8 +1407,8 @@ function ConfigForm({ config, onClose, onUpdate }) {
             <div className="space-y-3">
                 <div className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-secondary-color)] font-bold">Aportes legales</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Porcentaje Salud', 'porcentaje_salud', 'ecg_heart', { isCurrency: false, helper: 'Porcentaje que se descuenta al colaborador.', suffix: '%', placeholder: '4' })}
-                    {renderField('Porcentaje Pensión', 'porcentaje_pension', 'savings', { isCurrency: false, helper: 'Porcentaje destinado a pensión.', suffix: '%', placeholder: '4' })}
+                    {renderField('Valor Salud', 'valor_salud', 'ecg_heart', { helper: 'Monto fijo a descontar cuando aplique seguridad social.' })}
+                    {renderField('Valor Pensión', 'valor_pension', 'savings', { helper: 'Monto fijo destinado a pensión cuando aplique.' })}
                 </div>
             </div>
 

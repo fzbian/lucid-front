@@ -50,6 +50,16 @@ export const VIEW_CATALOG = [
     section: 'main',
   },
   {
+    id: 'pos-sessions',
+    label: 'Horarios POS',
+    shortLabel: 'Horarios POS',
+    description: 'Consulta aperturas y cierres de sesiones por punto de venta',
+    icon: 'schedule',
+    path: '/pos-sessions',
+    group: 'Operacion principal',
+    section: 'main',
+  },
+  {
     id: 'wallet',
     label: 'Cartera',
     shortLabel: 'Cartera',
@@ -144,7 +154,7 @@ export const ROLE_VIEW_GROUPS = [
     id: 'operacion',
     label: 'Operacion principal',
     description: 'Vistas base para la operacion diaria.',
-    viewIds: ['dashboard', 'movements', 'new', 'gastos', 'pedidos', 'wallet', 'payroll', 'reports'],
+    viewIds: ['dashboard', 'movements', 'new', 'gastos', 'pedidos', 'pos-sessions', 'wallet', 'payroll', 'reports'],
   },
   {
     id: 'facturacion',

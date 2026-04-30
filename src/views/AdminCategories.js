@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
 // import { useNavigate } from 'react-router-dom';
-import { listCategories, createCategory, updateCategory, deleteCategory, setGastoOperativo } from '../categoriesApi';
+import { listCategories, createCategory, updateCategory, deleteCategory, setGastoOperativo, setCarteraClientes } from '../categoriesApi';
 import { invalidateCategoriasCache } from '../api';
 import { useRole } from '../context/RoleContext';
 
@@ -68,6 +68,17 @@ export default function AdminCategories() {
       window.alert(e.message || 'Error al configurar');
     }
   };
+  const onToggleCarteraClientes = async (it) => {
+    const newVal = !it.is_cartera_clientes;
+    if (newVal && !window.confirm(`¿Marcar "${it.nombre}" como categoría de cartera de clientes? Las nuevas transacciones de ingreso exigirán seleccionar un cliente de cartera.`)) return;
+    try {
+      await setCarteraClientes(it.id, newVal);
+      invalidateCategoriasCache();
+      reload();
+    } catch (e) {
+      window.alert(e.message || 'Error al configurar cartera');
+    }
+  };
 
   const onSave = async () => {
     const nombreClean = (nombre || '').trim();
@@ -125,6 +136,9 @@ export default function AdminCategories() {
                       {it.is_gasto_operativo && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">Gastos Op.</span>
                       )}
+                      {it.is_cartera_clientes && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 font-medium">Cartera</span>
+                      )}
                     </div>
                     <p className={`text-xs ${it.tipo === 'INGRESO' ? 'text-[var(--success-color)]' : 'text-[var(--danger-color)]'}`}>{it.tipo}</p>
                   </div>
@@ -136,6 +150,15 @@ export default function AdminCategories() {
                         title={it.is_gasto_operativo ? 'Quitar como gastos operativos' : 'Marcar como gastos operativos'}
                       >
                         <span className="material-symbols-outlined !text-base">receipt_long</span>
+                      </button>
+                    )}
+                    {it.tipo === 'INGRESO' && (
+                      <button
+                        className={`px-2 py-1 rounded-lg border ${it.is_cartera_clientes ? 'border-sky-400 text-sky-300 bg-sky-900/10' : 'border-[var(--border-color)] text-[var(--text-secondary-color)] hover:bg-white/5'}`}
+                        onClick={() => onToggleCarteraClientes(it)}
+                        title={it.is_cartera_clientes ? 'Quitar como cartera de clientes' : 'Marcar como cartera de clientes'}
+                      >
+                        <span className="material-symbols-outlined !text-base">account_balance_wallet</span>
                       </button>
                     )}
                     <button className="px-2 py-1 rounded-lg border border-[var(--border-color)] hover:bg-white/5" onClick={() => openEdit(it)}>

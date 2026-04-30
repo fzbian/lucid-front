@@ -162,8 +162,8 @@ function buildPaymentSlipDoc(payment, user, config, options = {}) {
         });
 
         const deductions = [
-            [`Aporte Salud (${config?.porcentaje_salud || 4}%)`, formatCLP(payment.health)],
-            [`Aporte Pensión (${config?.porcentaje_pension || 4}%)`, formatCLP(payment.pension)],
+            ['Aporte Salud', formatCLP(payment.health)],
+            ['Aporte Pensión', formatCLP(payment.pension)],
         ];
 
         if (payment.advance > 0) deductions.push(['Adelantos / Préstamos', formatCLP(payment.advance)]);
