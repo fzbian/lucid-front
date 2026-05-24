@@ -19,6 +19,10 @@ function sanitizeFileNamePart(value) {
     .replace(/^_+|_+$/g, '') || 'cliente';
 }
 
+function getInvoiceCode(invoice) {
+  return invoice?.op || `#${invoice?.id || ''}`;
+}
+
 function formatQty(value) {
   const qty = Number(value || 0);
   return qty.toLocaleString('es-CO', {
@@ -27,63 +31,87 @@ function formatQty(value) {
   });
 }
 
-function getInvoiceCode(invoice) {
-  return invoice?.op || `#${invoice?.id || ''}`;
+function getLineUnitValue(line) {
+  const quantity = Number(line?.cantidad || 0);
+  const unitValue = Number(line?.valor_unitario || 0);
+  const total = Number(line?.valor || 0);
+  if (unitValue > 0) return unitValue;
+  if (quantity > 0 && total > 0) return total / quantity;
+  return 0;
 }
 
-function buildInvoiceDetailRows(invoices) {
+function getLineSubtotal(line) {
+  const quantity = Number(line?.cantidad || 0);
+  const unitValue = getLineUnitValue(line);
+  const total = Number(line?.valor || 0);
+  if (quantity > 0 && unitValue > 0) return quantity * unitValue;
+  return total;
+}
+
+function buildInvoiceRows(invoices) {
   return (Array.isArray(invoices) ? invoices : []).flatMap((invoice) => {
     const lineas = Array.isArray(invoice?.lineas) ? invoice.lineas.filter(Boolean) : [];
-    const hasConcept = Boolean(String(invoice?.concepto || '').trim());
-    const headerRow = [{
-      content: `Factura ${getInvoiceCode(invoice)} · ${invoice?.estado || 'Sin estado'} · Total ${formatCurrency(invoice?.valor_total)}`,
+    const conceptoGeneral = String(invoice?.concepto || '').trim();
+    const rows = [];
+    const invoiceLabel = getInvoiceCode(invoice);
+
+    rows.push([{
+      content: `Factura ${invoiceLabel}\nConcepto de la factura: ${conceptoGeneral || 'Sin concepto'}`,
       colSpan: 4,
       styles: {
         fillColor: [241, 245, 249],
         textColor: [15, 23, 42],
         fontStyle: 'bold',
-        fontSize: 7.5,
-        cellPadding: { top: 5, right: 4, bottom: 5, left: 4 },
+        fontSize: 8.5,
+        cellPadding: { top: 6, right: 5, bottom: 6, left: 5 },
         overflow: 'linebreak',
       },
-    }];
+    }]);
 
-    if (!hasConcept && lineas.length === 0) {
-      return [
-        headerRow,
-        [{
-          content: 'Esta factura no tiene conceptos ni lineas registradas.',
-          colSpan: 4,
-          styles: {
-            textColor: [100, 116, 139],
-            fontStyle: 'italic',
-            overflow: 'linebreak',
-          },
-        }],
-      ];
-    }
+    const detailLines = lineas.length > 0
+      ? lineas
+      : [{
+        concepto: conceptoGeneral || 'Concepto general',
+        cantidad: 1,
+        valor_unitario: Number(invoice?.valor_total || 0),
+        valor: Number(invoice?.valor_total || 0),
+      }];
 
-    const bodyRows = [];
-
-    if (hasConcept) {
-      bodyRows.push([
-        'Concepto general',
-        String(invoice.concepto).trim(),
-        '1',
-        formatCurrency(invoice?.valor_total),
-      ]);
-    }
-
-    if (lineas.length > 0) {
-      bodyRows.push(...lineas.map((line, index) => [
-        hasConcept && index === 0 ? 'Lineas' : '',
+    detailLines.forEach((line) => {
+      rows.push([
         line?.concepto || 'Sin concepto',
         formatQty(line?.cantidad),
-        formatCurrency(line?.valor),
-      ]));
-    }
+        formatCurrency(getLineUnitValue(line)),
+        formatCurrency(getLineSubtotal(line)),
+      ]);
+    });
 
-    return [headerRow, ...bodyRows];
+    rows.push([
+      {
+        content: 'Total factura',
+        colSpan: 3,
+        styles: { fontStyle: 'bold', halign: 'right', textColor: [15, 23, 42] },
+      },
+      formatCurrency(invoice?.valor_total),
+    ]);
+    rows.push([
+      {
+        content: 'Abonado',
+        colSpan: 3,
+        styles: { fontStyle: 'bold', halign: 'right', textColor: [22, 101, 52] },
+      },
+      formatCurrency(invoice?.valor_abonado),
+    ]);
+    rows.push([
+      {
+        content: 'Pendiente',
+        colSpan: 3,
+        styles: { fontStyle: 'bold', halign: 'right', textColor: [153, 27, 27] },
+      },
+      formatCurrency(invoice?.valor_pendiente),
+    ]);
+
+    return rows;
   });
 }
 
@@ -127,13 +155,6 @@ export async function generateCarteraAccountStatementPdf(client, invoices) {
   const tableMargin = { left: margin, right: margin + 18 };
   const pageWidth = doc.internal.pageSize.getWidth();
   const generatedAt = new Date();
-  const generatedAtText = generatedAt.toLocaleString('es-CO', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 
   doc.setFillColor(15, 23, 42);
   doc.roundedRect(margin, 28, pageWidth - margin * 2, 96, 18, 18, 'F');
@@ -148,16 +169,12 @@ export async function generateCarteraAccountStatementPdf(client, invoices) {
   doc.setFontSize(22);
   doc.text('Estado de cuenta', margin + 18, 78);
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text(`Generado el ${generatedAtText}`, margin + 18, 98);
-
   doc.setFontSize(11);
   doc.text((client?.nombre || 'Cliente').toUpperCase(), pageWidth - margin - 18, 62, { align: 'right' });
   doc.setTextColor(191, 219, 254);
-  doc.text(client?.celular ? `WhatsApp: ${client.celular}` : 'WhatsApp no registrado', pageWidth - margin - 18, 82, { align: 'right' });
+  doc.text('Resumen actual de cartera', pageWidth - margin - 18, 82, { align: 'right' });
   doc.setTextColor(226, 232, 240);
-  doc.text(`${summary.facturas} factura(s) incluidas`, pageWidth - margin - 18, 102, { align: 'right' });
+  doc.text(`${summary.facturas} factura(s)`, pageWidth - margin - 18, 102, { align: 'right' });
 
   const cards = [
     { label: 'Total facturado', value: formatCurrency(summary.totalFacturado), fill: [250, 250, 250], text: [15, 23, 42] },
@@ -182,13 +199,17 @@ export async function generateCarteraAccountStatementPdf(client, invoices) {
     doc.text(card.value, x + 14, cardY + 44);
   });
 
+  const invoiceRows = buildInvoiceRows(rows);
   doc.setTextColor(71, 85, 105);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('Detalle por factura', margin, 230);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text('Reporte consolidado por factura. Más abajo encontrarás el detalle organizado de conceptos y lineas.', margin, 230);
+  doc.setFontSize(9);
+  doc.text('Cada factura muestra primero su concepto general y debajo las líneas cobradas.', margin, 244);
 
   autoTable(doc, {
-    startY: 246,
+    startY: 260,
     margin: tableMargin,
     theme: 'grid',
     headStyles: {
@@ -214,76 +235,30 @@ export async function generateCarteraAccountStatementPdf(client, invoices) {
       fillColor: [248, 250, 252],
     },
     columnStyles: {
-      0: { cellWidth: 64 },
-      1: { cellWidth: 160 },
-      2: { cellWidth: 64, halign: 'right' },
-      3: { cellWidth: 64, halign: 'right' },
-      4: { cellWidth: 74, halign: 'right' },
-      5: { cellWidth: 58, halign: 'center' },
+      0: { cellWidth: 232 },
+      1: { cellWidth: 54, halign: 'center' },
+      2: { cellWidth: 88, halign: 'right' },
+      3: { cellWidth: 110, halign: 'right' },
     },
     head: [[
-      'Factura',
-      'Concepto',
-      'Total',
-      'Pagado',
-      'Pendiente',
-      'Estado',
+      'Línea cobrada',
+      'Cant.',
+      'Valor unitario',
+      'Subtotal / saldo',
     ]],
-    body: rows.map((invoice) => [
-      getInvoiceCode(invoice),
-      invoice?.concepto || 'Sin concepto',
-      formatCurrency(invoice?.valor_total),
-      formatCurrency(invoice?.valor_abonado),
-      formatCurrency(invoice?.valor_pendiente),
-      invoice?.estado || '—',
-    ]),
+    body: invoiceRows.length > 0 ? invoiceRows : [[
+      'No hay líneas registradas',
+      '—',
+      '—',
+      '—',
+    ]],
   });
 
-  const detailRows = buildInvoiceDetailRows(rows);
-  const detailStartY = (doc.lastAutoTable?.finalY || 246) + 28;
-  doc.setTextColor(71, 85, 105);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text('Detalle organizado por factura', margin, detailStartY);
-
-  autoTable(doc, {
-    startY: detailStartY + 12,
-    margin: tableMargin,
-    theme: 'grid',
-    headStyles: {
-      fillColor: [30, 41, 59],
-      textColor: [255, 255, 255],
-      fontStyle: 'bold',
-      fontSize: 7.5,
-      lineColor: [226, 232, 240],
-      lineWidth: 0.4,
-      cellPadding: 4,
-      overflow: 'linebreak',
-    },
-    styles: {
-      fontSize: 7.5,
-      cellPadding: 4,
-      lineColor: [226, 232, 240],
-      lineWidth: 0.4,
-      textColor: [30, 41, 59],
-      valign: 'middle',
-      overflow: 'linebreak',
-    },
-    columnStyles: {
-      0: { cellWidth: 74 },
-      1: { cellWidth: 270 },
-      2: { cellWidth: 54, halign: 'right' },
-      3: { cellWidth: 86, halign: 'right' },
-    },
-    head: [['Tipo', 'Concepto o detalle', 'Cantidad', 'Valor']],
-    body: detailRows,
-  });
-
-  const finalY = (doc.lastAutoTable?.finalY || 246) + 20;
+  const finalY = (doc.lastAutoTable?.finalY || 260) + 20;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(100, 116, 139);
-  doc.text('Documento generado para compartir el estado actual de la cartera del cliente por WhatsApp.', margin, finalY);
+  doc.text('Documento generado para compartir el estado actual de la cartera del cliente.', margin, finalY);
 
   const fileName = `Estado_Cuenta_${sanitizeFileNamePart(client?.nombre)}_${generatedAt.toISOString().slice(0, 10)}.pdf`;
   const blob = doc.output('blob');

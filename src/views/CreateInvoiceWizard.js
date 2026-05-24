@@ -28,11 +28,29 @@ function createEmptyLine() {
   return { concepto: "", cantidad: "1", valor: "" };
 }
 
+function getLineCantidad(line) {
+  const cantidad = Number(line?.cantidad || 0);
+  return Number.isFinite(cantidad) ? cantidad : 0;
+}
+
+function getLineUnitValue(line) {
+  const value = Number(line?.valor || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getLineTotal(line) {
+  return getLineCantidad(line) * getLineUnitValue(line);
+}
+
 function toLineFormValue(line) {
+  const cantidad = Number(line?.cantidad || 1);
+  const total = Number(line?.valor || 0);
+  const unitValue = Number(line?.valor_unitario || 0);
+  const derivedUnitValue = cantidad > 0 ? total / cantidad : total;
   return {
     concepto: line?.concepto || "",
-    cantidad: String(Number(line?.cantidad || 1)),
-    valor: String(Number(line?.valor || 0)),
+    cantidad: String(cantidad || 1),
+    valor: String(unitValue > 0 ? unitValue : derivedUnitValue),
   };
 }
 
@@ -75,10 +93,9 @@ function buildLinesFromOdooOrder(order) {
   const lines = sourceLines
     .map((line) => {
       const qty = Number(line?.qty || 0);
-      let value = Number(line?.subtotal_incl || line?.subtotal || 0);
-      if (!(value > 0) && qty > 0 && Number(line?.price_unit || 0) > 0) {
-        value = qty * Number(line.price_unit || 0);
-      }
+      const unitPrice = Number(line?.price_unit || 0);
+      const subtotal = Number(line?.subtotal_incl || line?.subtotal || 0);
+      const value = unitPrice > 0 ? unitPrice : (qty > 0 ? subtotal / qty : subtotal);
       return {
         concepto: String(line?.product_name || line?.name || "Producto").trim(),
         cantidad: String(qty || 1),
@@ -164,7 +181,7 @@ export default function CreateInvoiceWizard() {
   }, [clientId, editing, invoiceId, location.state]);
 
   const lineasTotal = useMemo(() => (
-    lineas.reduce((acc, line) => acc + Number(line?.valor || 0), 0)
+    lineas.reduce((acc, line) => acc + getLineTotal(line), 0)
   ), [lineas]);
   const valorNumber = useMemo(() => Number(lineasTotal || valorTotal || 0), [lineasTotal, valorTotal]);
   const paidAmount = Number(invoice?.valor_abonado || 0);
@@ -189,7 +206,7 @@ export default function CreateInvoiceWizard() {
     const orderRef = getOdooOrderRef(order);
     const clientName = extractOdooClientName(order?.note);
     const nextLines = buildLinesFromOdooOrder(order);
-    const nextTotal = nextLines.reduce((acc, line) => acc + Number(line.valor || 0), 0);
+    const nextTotal = nextLines.reduce((acc, line) => acc + getLineTotal(line), 0);
 
     setSelectedOdooOrder(order);
     setLineas(nextLines);
@@ -222,7 +239,8 @@ export default function CreateInvoiceWizard() {
       .map((line) => ({
         concepto: String(line?.concepto || "").trim(),
         cantidad: Number(line?.cantidad || 0),
-        valor: Number(line?.valor || 0),
+        valor_unitario: Number(line?.valor || 0),
+        valor: Number(line?.cantidad || 0) * Number(line?.valor || 0),
       }))
       .filter((line) => line.concepto || line.cantidad || line.valor);
   };
@@ -267,7 +285,7 @@ export default function CreateInvoiceWizard() {
         return;
       }
     }
-    const submitTotal = submitLines.reduce((acc, line) => acc + Number(line.valor || 0), 0);
+    const submitTotal = submitLines.reduce((acc, line) => acc + (Number(line.cantidad || 0) * Number(line.valor || 0)), 0);
     if (!(submitTotal > 0)) {
       window.alert("El valor de la factura debe ser mayor a 0.");
       return;
@@ -558,7 +576,7 @@ export default function CreateInvoiceWizard() {
                               />
                             </label>
                             <label className="flex flex-col gap-1.5 text-sm">
-                              <span className="text-[11px] font-medium text-[var(--text-secondary-color)]">Valor</span>
+                              <span className="text-[11px] font-medium text-[var(--text-secondary-color)]">Valor unitario</span>
                               <input
                                 type="number"
                                 min="0"
@@ -653,7 +671,7 @@ export default function CreateInvoiceWizard() {
                                 <p className="break-words font-medium text-white/90">{line.concepto || "Sin concepto"}</p>
                                 <p className="text-xs text-[var(--text-secondary-color)]">Cantidad {formatQty(line.cantidad)}</p>
                               </div>
-                              <p className="shrink-0 text-right font-semibold text-sky-100">{formatCurrency(line.valor)}</p>
+                              <p className="shrink-0 text-right font-semibold text-sky-100">{formatCurrency(getLineTotal(line))}</p>
                             </div>
                           ))}
                           {lineas.filter((line) => line.concepto || line.valor).length === 0 ? (

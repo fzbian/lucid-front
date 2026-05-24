@@ -24,6 +24,35 @@ function formatDate(value) {
   });
 }
 
+function formatQty(value) {
+  const qty = Number(value || 0);
+  return qty.toLocaleString('es-CO', {
+    minimumFractionDigits: Number.isInteger(qty) ? 0 : 2,
+    maximumFractionDigits: 3,
+  });
+}
+
+function getLineUnitValue(line) {
+  const quantity = Number(line?.cantidad || 0);
+  const storedUnit = Number(line?.valor_unitario || 0);
+  if (storedUnit > 0) return storedUnit;
+  const total = Number(line?.valor || 0);
+  if (quantity > 0 && total > 0) return total / quantity;
+  return 0;
+}
+
+function getLineTotal(line) {
+  const quantity = Number(line?.cantidad || 0);
+  const storedTotal = Number(line?.valor || 0);
+  const unit = getLineUnitValue(line);
+  if (quantity > 0 && unit > 0) return quantity * unit;
+  return storedTotal;
+}
+
+function getInvoiceCode(invoice) {
+  return invoice?.op || `#${invoice?.id || ''}`;
+}
+
 function sanitizeFileNamePart(value) {
   return String(value || 'factura')
     .normalize('NFD')
@@ -48,6 +77,70 @@ function blobToBase64(blob) {
     };
     reader.readAsDataURL(blob);
   });
+}
+
+function buildInvoiceRows(invoice) {
+  const lineas = Array.isArray(invoice?.lineas) ? invoice.lineas.filter(Boolean) : [];
+  const conceptoGeneral = String(invoice?.concepto || '').trim();
+  const rows = [];
+
+  rows.push([{
+    content: `Factura ${getInvoiceCode(invoice)}\nConcepto de la factura: ${conceptoGeneral || 'Sin concepto'}`,
+    colSpan: 4,
+    styles: {
+      fillColor: [241, 245, 249],
+      textColor: [15, 23, 42],
+      fontStyle: 'bold',
+      fontSize: 8.5,
+      cellPadding: { top: 6, right: 5, bottom: 6, left: 5 },
+      overflow: 'linebreak',
+    },
+  }]);
+
+  const detailLines = lineas.length > 0
+    ? lineas
+    : [{
+      concepto: conceptoGeneral || 'Concepto general',
+      cantidad: 1,
+      valor_unitario: Number(invoice?.valor_total || 0),
+      valor: Number(invoice?.valor_total || 0),
+    }];
+
+  detailLines.forEach((line) => {
+    rows.push([
+      line?.concepto || 'Sin concepto',
+      formatQty(line?.cantidad || 0),
+      formatCurrency(getLineUnitValue(line)),
+      formatCurrency(getLineTotal(line)),
+    ]);
+  });
+
+  rows.push([
+    {
+      content: 'Total factura',
+      colSpan: 3,
+      styles: { fontStyle: 'bold', halign: 'right', textColor: [15, 23, 42] },
+    },
+    formatCurrency(invoice?.valor_total || 0),
+  ]);
+  rows.push([
+    {
+      content: 'Abonado',
+      colSpan: 3,
+      styles: { fontStyle: 'bold', halign: 'right', textColor: [22, 101, 52] },
+    },
+    formatCurrency(invoice?.valor_abonado || 0),
+  ]);
+  rows.push([
+    {
+      content: 'Pendiente',
+      colSpan: 3,
+      styles: { fontStyle: 'bold', halign: 'right', textColor: [153, 27, 27] },
+    },
+    formatCurrency(invoice?.valor_pendiente || 0),
+  ]);
+
+  return rows;
 }
 
 function buildSummary(invoice, abonos) {
@@ -96,7 +189,6 @@ export async function generateCarteraInvoiceAbonosPdf(invoice, abonos) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.text(`Generado el ${generatedAtText}`, margin + 18, 98);
-  doc.text(invoice?.concepto || 'Sin concepto', margin + 18, 116);
 
   doc.setFontSize(11);
   doc.text((invoice?.cliente?.nombre || 'Cliente').toUpperCase(), pageWidth - margin - 18, 62, { align: 'right' });
@@ -128,13 +220,73 @@ export async function generateCarteraInvoiceAbonosPdf(invoice, abonos) {
     doc.text(card.value, x + 14, cardY + 44);
   });
 
+  const invoiceRows = buildInvoiceRows(invoice);
+  let cursorY = 246;
   doc.setTextColor(71, 85, 105);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('Detalle por factura', margin, cursorY);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text('Detalle de pagos aplicados sobre esta factura, sin incluir soportes gráficos adjuntos.', margin, 246);
+  doc.setFontSize(9);
+  doc.text('La factura muestra primero su concepto general y debajo las líneas cobradas.', margin, cursorY + 14);
+
+  cursorY += 30;
+  if (invoiceRows.length === 0) {
+    doc.setTextColor(100, 116, 139);
+    doc.setFontSize(9);
+    doc.text('No hay líneas detalladas registradas; se muestra solo el concepto general de la factura.', margin, cursorY + 6);
+    cursorY += 18;
+  } else {
+    autoTable(doc, {
+      startY: cursorY,
+      margin: { left: margin, right: margin },
+      theme: 'grid',
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        lineColor: [226, 232, 240],
+        lineWidth: 0.4,
+      },
+      styles: {
+        fontSize: 8,
+        cellPadding: 4,
+        lineColor: [226, 232, 240],
+        lineWidth: 0.4,
+        textColor: [30, 41, 59],
+        valign: 'middle',
+        overflow: 'linebreak',
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      columnStyles: {
+        0: { cellWidth: 232 },
+        1: { cellWidth: 54, halign: 'center' },
+        2: { cellWidth: 88, halign: 'right' },
+        3: { cellWidth: 110, halign: 'right' },
+      },
+      head: [[
+        'Línea cobrada',
+        'Cant.',
+        'Valor unitario',
+        'Subtotal / saldo',
+      ]],
+      body: invoiceRows,
+    });
+    cursorY = (doc.lastAutoTable?.finalY || cursorY) + 18;
+  }
+
+  doc.setTextColor(71, 85, 105);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('Abonos aplicados', margin, cursorY);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text('Pagos actuales aplicados a esta factura.', margin, cursorY + 14);
 
   autoTable(doc, {
-    startY: 262,
+    startY: cursorY + 22,
     margin: { left: margin, right: margin },
     theme: 'grid',
     headStyles: {
@@ -181,7 +333,7 @@ export async function generateCarteraInvoiceAbonosPdf(invoice, abonos) {
     ]),
   });
 
-  const finalY = (doc.lastAutoTable?.finalY || 262) + 18;
+  const finalY = (doc.lastAutoTable?.finalY || cursorY + 16) + 18;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(100, 116, 139);
