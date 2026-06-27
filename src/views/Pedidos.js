@@ -85,6 +85,203 @@ function formatPercent(value) {
     })}%`;
 }
 
+function RefundOrderDialog({ state, onClose, onConfirm }) {
+    if (!state?.open) return null;
+
+    const order = state.order || {};
+    const result = state.result || {};
+    const lines = Array.isArray(order?.lines_detail) ? order.lines_detail : [];
+    const payments = Array.isArray(order?.payments_detail) ? order.payments_detail : [];
+    const stockAudit = Array.isArray(result?.stock_audit) ? result.stock_audit : [];
+    const phase = state.phase || 'confirm';
+    const processing = phase === 'processing';
+    const done = phase === 'done';
+    const failed = phase === 'error';
+    const title = processing ? 'Reembolso en proceso' : done ? 'Reembolso completado' : failed ? 'Reembolso no completado' : 'Confirmar reembolso completo';
+    const total = Number(order?.amount_total) || 0;
+    const paid = Number(order?.amount_paid) || 0;
+    const refundTotal = Number(result?.amount_total) || 0;
+    const refundPaid = Number(result?.amount_paid) || 0;
+    const manualStockAdjusted = result?.manual_stock_adjusted === true;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 py-4">
+            <div className="w-full max-w-4xl max-h-[92vh] overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--dark-color)] shadow-2xl">
+                <div className="flex items-start justify-between gap-4 border-b border-[var(--border-color)] px-5 py-4">
+                    <div>
+                        <p className="text-lg font-semibold">{title}</p>
+                        <p className="text-xs text-[var(--text-secondary-color)]">
+                            Pedido original {order?.name || `#${order?.id || '-'}`} · Local {order?.local_name || order?.config_name || '-'}
+                        </p>
+                    </div>
+                    {!processing && (
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="rounded-lg p-2 text-[var(--text-secondary-color)] hover:bg-white/5 hover:text-white"
+                            aria-label="Cerrar"
+                        >
+                            <span className="material-symbols-outlined">close</span>
+                        </button>
+                    )}
+                </div>
+
+                <div className="max-h-[70vh] overflow-y-auto px-5 py-4 space-y-4">
+                    {processing && (
+                        <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4">
+                            <div className="flex items-center gap-3">
+                                <span className="h-8 w-8 rounded-full border-2 border-amber-300/30 border-t-amber-200 animate-spin" />
+                                <div>
+                                    <p className="font-semibold text-amber-100">No cierres esta ventana.</p>
+                                    <p className="text-sm text-amber-100/80">
+                                        Se está creando el reembolso, validando inventario por producto y aplicando ajuste manual si Odoo no devuelve el stock correctamente.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {failed && (
+                        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+                            <p className="font-semibold text-red-200">No se pudo completar el reembolso.</p>
+                            <p className="mt-1 text-sm text-red-100/90">{state.error || 'Error desconocido'}</p>
+                        </div>
+                    )}
+
+                    {done && (
+                        <div className={`rounded-xl border p-4 ${manualStockAdjusted ? 'border-amber-400/30 bg-amber-500/10' : 'border-emerald-500/30 bg-emerald-500/10'}`}>
+                            <p className={`font-semibold ${manualStockAdjusted ? 'text-amber-100' : 'text-emerald-200'}`}>
+                                {manualStockAdjusted ? 'Reembolso creado y stock corregido manualmente.' : 'Reembolso creado y stock validado.'}
+                            </p>
+                            <p className="mt-1 text-sm text-[var(--text-secondary-color)]">
+                                Reembolso POS {result?.refund_order_name || `#${result?.refund_order_id || '-'}`} · Sesión {result?.refund_session_name || '-'} · Ubicación stock {result?.stock_location_name || '-'}
+                            </p>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <section className="rounded-xl border border-[var(--border-color)] bg-[var(--card-color)] p-4">
+                            <p className="text-xs uppercase text-[var(--text-secondary-color)]">Documento original</p>
+                            <p className="mt-1 font-semibold">{order?.invoice_name || result?.original_invoice_name || order?.name || '-'}</p>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                                <div>
+                                    <p className="text-xs text-[var(--text-secondary-color)]">Total</p>
+                                    <p className="font-semibold">{formatCLP(total)}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-[var(--text-secondary-color)]">Pagado</p>
+                                    <p className="font-semibold">{formatCLP(paid)}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-[var(--text-secondary-color)]">Estado</p>
+                                    <p className="font-semibold">{order?.state || '-'}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-[var(--text-secondary-color)]">Referencia POS</p>
+                                    <p className="font-semibold">{order?.pos_reference || '-'}</p>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className="rounded-xl border border-[var(--border-color)] bg-[var(--card-color)] p-4">
+                            <p className="text-xs uppercase text-[var(--text-secondary-color)]">Documento de reembolso</p>
+                            <p className="mt-1 font-semibold">{done ? (result?.refund_invoice_name || result?.refund_order_name || '-') : 'Se generará al confirmar'}</p>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                                <div>
+                                    <p className="text-xs text-[var(--text-secondary-color)]">Total reembolso</p>
+                                    <p className="font-semibold">{done ? formatCLP(refundTotal) : formatCLP(-Math.abs(total))}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-[var(--text-secondary-color)]">Pago reversado</p>
+                                    <p className="font-semibold">{done ? formatCLP(refundPaid) : formatCLP(-Math.abs(paid))}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-[var(--text-secondary-color)]">Estado</p>
+                                    <p className="font-semibold">{done ? (result?.refund_order_state || '-') : 'Pendiente'}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-[var(--text-secondary-color)]">Métodos</p>
+                                    <p className="font-semibold">{Array.isArray(result?.payments_by_method) && result.payments_by_method.length ? result.payments_by_method.length : payments.length}</p>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <section className="rounded-xl border border-[var(--border-color)] bg-[var(--card-color)] p-4">
+                        <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs uppercase text-[var(--text-secondary-color)]">Productos e inventario</p>
+                            <p className="text-xs text-[var(--text-secondary-color)]">{lines.length} línea(s)</p>
+                        </div>
+                        <div className="mt-3 overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                                <thead className="text-xs text-[var(--text-secondary-color)]">
+                                    <tr className="border-b border-[var(--border-color)]">
+                                        <th className="py-2 pr-3 text-left font-medium">Producto</th>
+                                        <th className="py-2 px-3 text-right font-medium">Devuelve</th>
+                                        <th className="py-2 px-3 text-right font-medium">Antes</th>
+                                        <th className="py-2 px-3 text-right font-medium">Después Odoo</th>
+                                        <th className="py-2 px-3 text-right font-medium">Final</th>
+                                        <th className="py-2 pl-3 text-left font-medium">Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {(done ? stockAudit : lines).map((item, index) => {
+                                        const name = done ? item?.product_name : item?.product_name;
+                                        const qty = done ? item?.qty_returned : item?.qty;
+                                        return (
+                                            <tr key={`${item?.product_id || item?.id || index}`} className="border-b border-white/5 last:border-0">
+                                                <td className="py-2 pr-3">{name || '-'}</td>
+                                                <td className="py-2 px-3 text-right">{formatQty(Math.abs(Number(qty) || 0))}</td>
+                                                <td className="py-2 px-3 text-right">{done ? formatQty(item?.stock_before) : '-'}</td>
+                                                <td className="py-2 px-3 text-right">{done ? formatQty(item?.stock_after_odoo) : '-'}</td>
+                                                <td className="py-2 px-3 text-right">{done ? formatQty(item?.stock_final) : '-'}</td>
+                                                <td className="py-2 pl-3">
+                                                    {done ? (item?.adjusted_manually ? `Ajuste manual +${formatQty(item?.manual_adjustment_delta)}` : 'Validado por Odoo') : 'Se validará al procesar'}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 border-t border-[var(--border-color)] px-5 py-4">
+                    {!processing && (
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2 rounded-lg border border-[var(--border-color)] bg-white/5 text-sm hover:bg-white/10"
+                        >
+                            {done ? 'Cerrar' : 'Cancelar'}
+                        </button>
+                    )}
+                    {!done && !failed && (
+                        <button
+                            type="button"
+                            onClick={onConfirm}
+                            disabled={processing}
+                            className="px-4 py-2 rounded-lg border border-red-400/40 bg-red-500/20 text-red-100 text-sm font-semibold hover:bg-red-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            {processing ? 'Procesando...' : 'Confirmar y reembolsar'}
+                        </button>
+                    )}
+                    {failed && (
+                        <button
+                            type="button"
+                            onClick={onConfirm}
+                            className="px-4 py-2 rounded-lg border border-red-400/40 bg-red-500/20 text-red-100 text-sm font-semibold hover:bg-red-500/30"
+                        >
+                            Intentar de nuevo
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function Pedidos() {
     useTitle('Pedidos · ATM Ricky Rich');
     const { notify } = useNotifications();
@@ -113,6 +310,13 @@ export default function Pedidos() {
     const [ordersTotal, setOrdersTotal] = useState(0);
     const [ordersPage, setOrdersPage] = useState(1);
     const [refundingOrderID, setRefundingOrderID] = useState(0);
+    const [refundDialog, setRefundDialog] = useState({
+        open: false,
+        phase: 'confirm',
+        order: null,
+        result: null,
+        error: '',
+    });
 
     const resetOrdersState = useCallback(() => {
         setOrders([]);
@@ -283,30 +487,47 @@ export default function Pedidos() {
         resetOrdersState();
     };
 
-    const handleRefundOrder = useCallback(async (order) => {
+    const handleRefundOrder = useCallback((order) => {
         const orderID = Number(order?.id) || 0;
         if (orderID <= 0) {
             notify({ type: 'warning', message: 'Pedido inválido para reembolso.' });
             return;
         }
 
-        const orderName = String(order?.name || `#${orderID}`);
-        const total = formatCLP(order?.amount_total || 0);
-        const state = String(order?.state || '').toUpperCase();
-        const confirmMessage = [
-            `Confirmar reembolso completo del pedido ${orderName}.`,
-            '',
-            `Estado actual: ${state || '-'}`,
-            `Total a reembolsar: ${total}`,
-            '',
-            'Esta acción genera un pedido de reembolso completo en Odoo usando el mismo método de pago.',
-            'Solo continúa si ya validaste que corresponde devolver el 100% del pedido.',
-        ].join('\n');
+        setRefundDialog({
+            open: true,
+            phase: 'confirm',
+            order: {
+                ...order,
+                local_name: selectedSession?.local_name || selectedLocal?.local_name || order?.local_name || '',
+            },
+            result: null,
+            error: '',
+        });
+    }, [notify, selectedLocal, selectedSession]);
 
-        if (!window.confirm(confirmMessage)) {
+    const closeRefundDialog = useCallback(() => {
+        setRefundDialog((current) => {
+            if (current?.phase === 'processing') return current;
+            return {
+                open: false,
+                phase: 'confirm',
+                order: null,
+                result: null,
+                error: '',
+            };
+        });
+    }, []);
+
+    const executeRefundOrder = useCallback(async () => {
+        const order = refundDialog?.order;
+        const orderID = Number(order?.id) || 0;
+        if (orderID <= 0) {
+            setRefundDialog((current) => ({ ...current, phase: 'error', error: 'Pedido inválido para reembolso.' }));
             return;
         }
 
+        setRefundDialog((current) => ({ ...current, phase: 'processing', error: '' }));
         setRefundingOrderID(orderID);
         try {
             const res = await apiFetch(`/api/odoo/orders/${orderID}/refund`, {
@@ -324,17 +545,30 @@ export default function Pedidos() {
             const refundName = String(payload?.data?.refund_order_name || '').trim();
             const label = refundName || (refundID > 0 ? `#${refundID}` : 'generado');
 
+            setRefundDialog((current) => ({
+                ...current,
+                phase: 'done',
+                result: payload?.data || {},
+                error: '',
+            }));
             notify({ type: 'success', message: `Reembolso creado correctamente (${label}).` });
             await loadOrdersBySession(Number(selectedSession?.session_id) || 0, ordersPage);
         } catch (refundError) {
-            notify({ type: 'error', message: String(refundError?.message || 'Error generando reembolso') });
+            const message = String(refundError?.message || 'Error generando reembolso');
+            setRefundDialog((current) => ({ ...current, phase: 'error', error: message }));
+            notify({ type: 'error', message });
         } finally {
             setRefundingOrderID(0);
         }
-    }, [loadOrdersBySession, notify, ordersPage, selectedSession]);
+    }, [loadOrdersBySession, notify, ordersPage, refundDialog, selectedSession]);
 
     return (
         <Layout title="Pedidos">
+            <RefundOrderDialog
+                state={refundDialog}
+                onClose={closeRefundDialog}
+                onConfirm={executeRefundOrder}
+            />
             <div className="space-y-5">
                 <section className="rounded-2xl border border-[var(--border-color)] bg-[linear-gradient(135deg,rgba(23,81,122,0.3),rgba(18,23,30,0.96))] p-5 sm:p-6">
                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
