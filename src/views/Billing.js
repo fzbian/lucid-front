@@ -46,6 +46,7 @@ export default function Billing() {
     const [showLocaleConfig, setShowLocaleConfig] = useState(false);
     const [localeDraft, setLocaleDraft] = useState({});
     const [savingLocaleConfig, setSavingLocaleConfig] = useState(false);
+    const [syncingPOS, setSyncingPOS] = useState(false);
 
     const fetchBilling = useCallback(async () => {
         setLoading(true);
@@ -248,6 +249,36 @@ export default function Billing() {
         handleDeleteReport(selectedMonthIdx);
     };
 
+    const handleSyncPOSNames = async () => {
+        if (syncingPOS) return;
+        if (!window.confirm('¿Sincronizar Titanium con San Fason?\n\nEsto actualizará los datos históricos ligados al nombre anterior para que los informes usen el nombre actual.')) return;
+        setSyncingPOS(true);
+        try {
+            const res = await apiFetch('/api/billing/pos-aliases/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ old_pos_name: 'Titanium', current_pos_name: 'San Fason' }),
+            });
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(json.error || json.detalle || 'No se pudo sincronizar el local');
+            }
+            await Promise.all([fetchBilling(), fetchStatus(), fetchBillingConfigs()]);
+            const updated = json.updated || {};
+            const totalUpdated = Object.values(updated).reduce((sum, value) => sum + (Number(value) || 0), 0);
+            notify({
+                type: 'success',
+                message: totalUpdated > 0
+                    ? `San Fason actualizado. ${totalUpdated} referencia(s) sincronizada(s).`
+                    : 'San Fason ya estaba sincronizado.',
+            });
+        } catch (e) {
+            notify({ type: 'error', message: e.message || 'No se pudo sincronizar el local' });
+        } finally {
+            setSyncingPOS(false);
+        }
+    };
+
     const openLocaleConfigModal = () => {
         const initial = {};
         allLocaleOptions.forEach((pos) => {
@@ -447,7 +478,7 @@ export default function Billing() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
                         <button
                             onClick={openSelectedMonthFlow}
                             disabled={isResettingSelectedMonth}
@@ -481,6 +512,17 @@ export default function Billing() {
                         >
                             <span className={`material-symbols-outlined text-base ${loading ? 'animate-spin' : ''}`}>refresh</span>
                             Actualizar
+                        </button>
+
+                        <button
+                            onClick={handleSyncPOSNames}
+                            disabled={syncingPOS}
+                            className="w-full min-h-[44px] px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl transition-colors text-sm font-bold uppercase tracking-wide flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            <span className={`material-symbols-outlined text-base ${syncingPOS ? 'animate-spin' : ''}`}>
+                                {syncingPOS ? 'progress_activity' : 'sync'}
+                            </span>
+                            {syncingPOS ? 'Sincronizando...' : 'Sincronizar POS'}
                         </button>
 
                     </div>

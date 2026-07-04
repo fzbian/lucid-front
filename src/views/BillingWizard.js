@@ -78,6 +78,7 @@ export default function BillingWizard() {
     const [commissionPctByPos, setCommissionPctByPos] = useState({}); // { posName: pctSum }
     const [manualReportDraft, setManualReportDraft] = useState({});
     const [savingManualReport, setSavingManualReport] = useState(false);
+    const [syncingPOS, setSyncingPOS] = useState(false);
 
     // Fixed costs grouped by POS
     const fixedCostsByPos = {};
@@ -266,6 +267,43 @@ export default function BillingWizard() {
             console.error(e);
         } finally {
             setNominaActionLoading(null);
+        }
+    };
+
+    const handleSyncPOSNames = async () => {
+        if (syncingPOS) return;
+        if (!window.confirm('¿Sincronizar Titanium con San Fason?\n\nEsto actualizará los datos históricos ligados al nombre anterior para que este informe use el nombre actual.')) return;
+        setSyncingPOS(true);
+        try {
+            const res = await apiFetch('/api/billing/pos-aliases/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ old_pos_name: 'Titanium', current_pos_name: 'San Fason' }),
+            });
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(json.error || json.detalle || 'No se pudo sincronizar el local');
+            }
+            await Promise.all([
+                loadReportLocales(),
+                loadCommissionConfig(),
+                loadFixedCosts(),
+                loadReportData(),
+                loadCommonGastosBatch(),
+                loadNominaSummary(),
+            ]);
+            const updated = json.updated || {};
+            const totalUpdated = Object.values(updated).reduce((sum, value) => sum + (Number(value) || 0), 0);
+            notify({
+                type: 'success',
+                message: totalUpdated > 0
+                    ? `San Fason actualizado. ${totalUpdated} referencia(s) sincronizada(s).`
+                    : 'San Fason ya estaba sincronizado.',
+            });
+        } catch (e) {
+            notify({ type: 'error', message: e.message || 'No se pudo sincronizar el local' });
+        } finally {
+            setSyncingPOS(false);
         }
     };
 
@@ -738,9 +776,21 @@ export default function BillingWizard() {
                         {/* ====== STEP 1: GASTOS FIJOS ====== */}
                         {step === 1 && (
                             <div className="space-y-4">
-                                <div className="text-sm text-[var(--text-secondary-color)] bg-[var(--card-color)] border border-[var(--border-color)] rounded-xl p-3">
-                                    <span className="material-symbols-outlined text-[var(--primary-color)] align-middle mr-1">info</span>
-                                    Configura los gastos fijos por punto de venta. Puedes agregar, editar o eliminar gastos, y activar/desactivar con el toggle.
+                                <div className="text-sm text-[var(--text-secondary-color)] bg-[var(--card-color)] border border-[var(--border-color)] rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                    <div>
+                                        <span className="material-symbols-outlined text-[var(--primary-color)] align-middle mr-1">info</span>
+                                        Configura los gastos fijos por punto de venta. Puedes agregar, editar o eliminar gastos, y activar/desactivar con el toggle.
+                                    </div>
+                                    <button
+                                        onClick={handleSyncPOSNames}
+                                        disabled={confirmed || syncingPOS}
+                                        className="w-full sm:w-auto min-h-[36px] px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-[var(--border-color)] text-xs font-bold uppercase tracking-wide transition-colors flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+                                    >
+                                        <span className={`material-symbols-outlined text-sm ${syncingPOS ? 'animate-spin' : ''}`}>
+                                            {syncingPOS ? 'progress_activity' : 'sync'}
+                                        </span>
+                                        {syncingPOS ? 'Sincronizando...' : 'Sincronizar POS'}
+                                    </button>
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
