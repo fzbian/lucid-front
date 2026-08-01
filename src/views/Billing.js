@@ -31,6 +31,22 @@ function posNameKey(value) {
     return String(value || '').trim().toLocaleLowerCase('es');
 }
 
+function verifyPersistedSelection(entries, configs) {
+    const persistedByID = new Map(
+        (Array.isArray(configs) ? configs : []).map((cfg) => [Number(cfg.odoo_pos_id), cfg])
+    );
+    if (persistedByID.size !== entries.length) {
+        throw new Error('La verificación devolvió una cantidad distinta de puntos de venta');
+    }
+    const mismatches = entries.filter((entry) => {
+        const persisted = persistedByID.get(Number(entry.odoo_pos_id));
+        return !persisted || (persisted.include_in_reports !== false) !== entry.include_in_reports;
+    });
+    if (mismatches.length > 0) {
+        throw new Error(`No se confirmó la selección de: ${mismatches.map((entry) => entry.pos_name).join(', ')}`);
+    }
+}
+
 export default function Billing() {
     const { notify } = useNotifications();
     const navigate = useNavigate();
@@ -50,6 +66,7 @@ export default function Billing() {
     const [showLocaleConfig, setShowLocaleConfig] = useState(false);
     const [localeDraft, setLocaleDraft] = useState({});
     const [savingLocaleConfig, setSavingLocaleConfig] = useState(false);
+    const [loadingLocaleConfig, setLoadingLocaleConfig] = useState(false);
     const [syncingPOS, setSyncingPOS] = useState(false);
 
     const fetchBilling = useCallback(async () => {
@@ -83,9 +100,13 @@ export default function Billing() {
         }
     }, [year]);
 
-    const fetchBillingConfigs = useCallback(async () => {
+    const fetchBillingConfigs = useCallback(async (forceRefresh = false, requireOdoo = false) => {
         try {
-            const res = await apiFetch('/api/billing/configs');
+            const params = new URLSearchParams();
+            if (forceRefresh) params.set('refresh', '1');
+            if (requireOdoo) params.set('require_odoo', '1');
+            const query = params.toString();
+            const res = await apiFetch(`/api/billing/configs${query ? `?${query}` : ''}`);
             const json = await res.json().catch(() => null);
             if (!res.ok) {
                 throw new Error(json?.error || 'Error cargando los puntos de venta de Odoo');
@@ -148,32 +169,35 @@ export default function Billing() {
         const map = {};
         (billingConfigs || []).forEach((cfg) => {
             if (!cfg?.pos_name) return;
-            map[cfg.pos_name] = cfg;
+            map[posNameKey(cfg.pos_name)] = cfg;
         });
         return map;
     }, [billingConfigs]);
 
     const isLocaleIncludedInReports = useCallback((pos) => {
-        const cfg = billingConfigMap[pos];
-        if (!cfg) return true;
+        const cfg = billingConfigMap[posNameKey(pos)];
+        if (!cfg) return billingConfigs.length === 0;
         return cfg.include_in_reports !== false;
-    }, [billingConfigMap]);
+    }, [billingConfigMap, billingConfigs.length]);
 
     const filteredData = useMemo(() => {
         const next = Object.fromEntries(
             Object.entries(data).filter(([pos]) => isLocaleIncludedInReports(pos))
         );
-        Object.keys(billingConfigMap).forEach((pos) => {
-            if (isLocaleIncludedInReports(pos) && !next[pos]) {
+        billingConfigs.forEach((cfg) => {
+            const pos = cfg.pos_name;
+            if (cfg.include_in_reports !== false && !next[pos]) {
                 next[pos] = {};
             }
         });
         return next;
-    }, [data, billingConfigMap, isLocaleIncludedInReports]);
+    }, [data, billingConfigs, isLocaleIncludedInReports]);
 
     const allLocaleOptions = useMemo(() => {
-        return Object.keys(billingConfigMap).sort(sortPosNames);
-    }, [billingConfigMap]);
+        return [...billingConfigs]
+            .filter((cfg) => Number(cfg?.odoo_pos_id) > 0 && cfg?.pos_name)
+            .sort((a, b) => sortPosNames(a.pos_name, b.pos_name));
+    }, [billingConfigs]);
 
     const allKeys = new Set();
     Object.values(filteredData).forEach((posData) => {
@@ -292,23 +316,37 @@ export default function Billing() {
         }
     };
 
-    const openLocaleConfigModal = () => {
-        const initial = {};
-        allLocaleOptions.forEach((pos) => {
-            initial[pos] = isLocaleIncludedInReports(pos);
-        });
-        setLocaleDraft(initial);
-        setShowLocaleConfig(true);
+    const openLocaleConfigModal = async () => {
+        if (loadingLocaleConfig) return;
+        setLoadingLocaleConfig(true);
+        try {
+            const configs = await fetchBillingConfigs(true, true);
+            if (!configs) {
+                throw new Error('No se pudieron actualizar los puntos de venta desde Odoo');
+            }
+            const initial = {};
+            configs.forEach((cfg) => {
+                if (Number(cfg?.odoo_pos_id) <= 0) return;
+                initial[String(cfg.odoo_pos_id)] = cfg.include_in_reports !== false;
+            });
+            setLocaleDraft(initial);
+            setShowLocaleConfig(true);
+        } catch (e) {
+            notify({ type: 'error', message: e.message || 'No se pudo abrir la configuración' });
+        } finally {
+            setLoadingLocaleConfig(false);
+        }
     };
 
-    const toggleLocaleDraft = (pos) => {
-        setLocaleDraft((prev) => ({ ...prev, [pos]: !prev[pos] }));
+    const toggleLocaleDraft = (odooPOSID) => {
+        const key = String(odooPOSID);
+        setLocaleDraft((prev) => ({ ...prev, [key]: !prev[key] }));
     };
 
     const setAllLocaleDraft = (included) => {
         const next = {};
-        allLocaleOptions.forEach((pos) => {
-            next[pos] = included;
+        allLocaleOptions.forEach((cfg) => {
+            next[String(cfg.odoo_pos_id)] = included;
         });
         setLocaleDraft(next);
     };
@@ -320,11 +358,12 @@ export default function Billing() {
         }
         setSavingLocaleConfig(true);
         try {
-            const entries = allLocaleOptions.map((pos) => {
-                const cfg = billingConfigMap[pos] || {};
+            const entries = allLocaleOptions.map((cfg) => {
+                const idKey = String(cfg.odoo_pos_id);
                 return {
-                    pos_name: pos,
-                    include_in_reports: localeDraft[pos] !== false,
+                    odoo_pos_id: Number(cfg.odoo_pos_id),
+                    pos_name: cfg.pos_name,
+                    include_in_reports: localeDraft[idKey] !== false,
                     arriendo: Number(cfg.arriendo) || 0,
                     internet: Number(cfg.internet) || 0,
                     luz: Number(cfg.luz) || 0,
@@ -343,28 +382,24 @@ export default function Billing() {
             });
             const json = await res.json().catch(() => ({}));
             if (!res.ok) {
-                const invalidNames = Array.isArray(json.pos_names) && json.pos_names.length > 0
-                    ? `: ${json.pos_names.join(', ')}`
-                    : '';
-                throw new Error(`${json.error || 'Error guardando configuración de locales'}${invalidNames}`);
+                if (Array.isArray(json.configs)) setBillingConfigs(json.configs);
+                throw new Error(json.error || 'Error guardando configuración de locales');
             }
 
-            if (Array.isArray(json.configs)) {
-                setBillingConfigs(json.configs);
-                const persistedByKey = new Map(json.configs.map((cfg) => [posNameKey(cfg.pos_name), cfg]));
-                const notPersisted = entries.filter((entry) => {
-                    const persisted = persistedByKey.get(posNameKey(entry.pos_name));
-                    return !persisted || (persisted.include_in_reports !== false) !== entry.include_in_reports;
-                });
-                if (notPersisted.length > 0) {
-                    throw new Error(`No se confirmó la configuración de: ${notPersisted.map((entry) => entry.pos_name).join(', ')}`);
-                }
-            } else {
-                const refreshedConfigs = await fetchBillingConfigs();
-                if (!refreshedConfigs) {
-                    throw new Error('La configuración se guardó, pero no se pudo verificar su estado');
-                }
+            if (json.verified !== true || !Array.isArray(json.configs)) {
+                throw new Error('El servidor no confirmó la verificación de la configuración');
             }
+            verifyPersistedSelection(entries, json.configs);
+
+            const expectedSelectedIDs = entries.filter((entry) => entry.include_in_reports).map((entry) => entry.odoo_pos_id).sort((a, b) => a - b);
+            const returnedSelectedIDs = (Array.isArray(json.selected_pos_ids) ? json.selected_pos_ids : []).map(Number).sort((a, b) => a - b);
+            if (JSON.stringify(expectedSelectedIDs) !== JSON.stringify(returnedSelectedIDs)) {
+                throw new Error('La lista seleccionada no coincide con la confirmación del servidor');
+            }
+
+            const finalConfigs = await fetchBillingConfigs(true, true);
+            if (!finalConfigs) throw new Error('No se pudo realizar la verificación final contra Odoo');
+            verifyPersistedSelection(entries, finalConfigs);
             await fetchBilling();
             setShowLocaleConfig(false);
             notify({ type: 'success', message: 'Locales para informes actualizados.' });
@@ -406,17 +441,20 @@ export default function Billing() {
                                 Revisa ventas por local y genera el informe mensual.
                             </p>
                         </div>
-                        <div className="hidden sm:flex items-center gap-2">
-                            <div className="flex items-center gap-2 text-xs text-[var(--text-secondary-color)] bg-white/5 px-3 py-1.5 rounded-lg">
+                        <div className="flex items-center gap-2">
+                            <div className="hidden sm:flex items-center gap-2 text-xs text-[var(--text-secondary-color)] bg-white/5 px-3 py-1.5 rounded-lg">
                                 <span className="material-symbols-outlined text-sm">calendar_month</span>
                                 Año {year}
                             </div>
                             <button
                                 onClick={openLocaleConfigModal}
+                                disabled={loadingLocaleConfig}
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-white/5 hover:bg-white/10 text-xs font-semibold transition-colors"
                             >
-                                <span className="material-symbols-outlined text-sm">settings</span>
-                                Configuración
+                                <span className={`material-symbols-outlined text-sm ${loadingLocaleConfig ? 'animate-spin' : ''}`}>
+                                    {loadingLocaleConfig ? 'progress_activity' : 'settings'}
+                                </span>
+                                {loadingLocaleConfig ? 'Actualizando...' : 'Configuración'}
                             </button>
                         </div>
                     </div>
@@ -781,19 +819,20 @@ export default function Billing() {
                                         No hay locales de Odoo disponibles para configurar.
                                     </div>
                                 )}
-                                {allLocaleOptions.map((pos) => {
-                                    const included = localeDraft[pos] !== false;
+                                {allLocaleOptions.map((cfg) => {
+                                    const idKey = String(cfg.odoo_pos_id);
+                                    const included = localeDraft[idKey] !== false;
                                     return (
                                         <button
-                                            key={pos}
-                                            onClick={() => toggleLocaleDraft(pos)}
+                                            key={idKey}
+                                            onClick={() => toggleLocaleDraft(cfg.odoo_pos_id)}
                                             disabled={savingLocaleConfig}
                                             className={`w-full px-3 py-2.5 rounded-xl border transition-colors flex items-center justify-between text-left ${included
                                                 ? 'border-[var(--primary-color)]/30 bg-[var(--primary-color)]/10'
                                                 : 'border-[var(--border-color)] bg-[var(--dark-color)] hover:bg-white/5'
                                                 }`}
                                         >
-                                            <span className="text-sm font-medium truncate pr-3">{pos}</span>
+                                            <span className="text-sm font-medium truncate pr-3">{cfg.pos_name}</span>
                                             <span className={`material-symbols-outlined text-base flex-shrink-0 ${included ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary-color)]'}`}>
                                                 {included ? 'check_circle' : 'radio_button_unchecked'}
                                             </span>

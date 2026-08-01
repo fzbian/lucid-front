@@ -5,6 +5,7 @@ import { apiFetch } from '../api';
 import { formatCLP } from '../formatMoney';
 import { useNotifications } from '../components/Notifications';
 import { clearBillingDraft, getBillingDraft, upsertBillingDraft } from '../utils/billingDraft';
+import { verifyMonthlyPOSSelection } from '../utils/billingSelection';
 import { openBillingReportIndex } from '../utils/billingReportIndexHtml';
 import { openBillingGastosIndex } from '../utils/billingGastosIndexHtml';
 
@@ -74,8 +75,6 @@ export default function BillingWizard() {
     const [availablePayments, setAvailablePayments] = useState([]); // pagos disponibles para asignar
     const [showNominaSelector, setShowNominaSelector] = useState({}); // { posName: true/false }
     const [nominaActionLoading, setNominaActionLoading] = useState(null); // { userId, action: 'assign'|'unassign' } or null
-    const [reportLocaleMap, setReportLocaleMap] = useState({}); // { posName: includedBool }
-    const [commissionPctByPos, setCommissionPctByPos] = useState({}); // { posName: pctSum }
     const [manualReportDraft, setManualReportDraft] = useState({});
     const [savingManualReport, setSavingManualReport] = useState(false);
     const [syncingPOS, setSyncingPOS] = useState(false);
@@ -87,17 +86,10 @@ export default function BillingWizard() {
         fixedCostsByPos[fc.pos_name].push(fc);
     });
 
-    const isPosIncludedInReports = useCallback((posName) => {
-        if (!(posName in reportLocaleMap)) return true;
-        return reportLocaleMap[posName] !== false;
-    }, [reportLocaleMap]);
-
-    // All POS names
+    // El backend mensual ya devuelve exactamente los POS seleccionados en Odoo.
     const allPosNames = [...new Set([
-        ...Object.keys(fixedCostsByPos),
-        ...Object.keys(reportLocaleMap),
         ...reportData.map(e => e.pos_name),
-    ])].filter(isPosIncludedInReports).sort(sortPosNames);
+    ])].filter(Boolean).sort(sortPosNames);
 
     // Report data keyed by POS
     const reportByPos = {};
@@ -134,6 +126,7 @@ export default function BillingWizard() {
             const res = await apiFetch(`/api/billing/monthly?year=${year}&month=${month}`);
             if (res.ok) {
                 const json = await res.json();
+                verifyMonthlyPOSSelection(json);
                 const data = json.data || [];
                 setReportData(data);
                 if (data.some(e => e.confirmed)) {
@@ -146,40 +139,6 @@ export default function BillingWizard() {
             console.error(e);
         }
     }, [year, month, navigate]);
-
-    const loadReportLocales = useCallback(async () => {
-        try {
-            const res = await apiFetch('/api/billing/configs');
-            if (!res.ok) return;
-            const list = await res.json();
-            const map = {};
-            (Array.isArray(list) ? list : []).forEach((cfg) => {
-                if (!cfg?.pos_name) return;
-                map[cfg.pos_name] = cfg.include_in_reports !== false;
-            });
-            setReportLocaleMap(map);
-        } catch (e) {
-            console.error(e);
-        }
-    }, []);
-
-    const loadCommissionConfig = useCallback(async () => {
-        try {
-            const res = await apiFetch('/api/nomina/pos-assignments');
-            if (!res.ok) return;
-            const list = await res.json();
-            const map = {};
-            (Array.isArray(list) ? list : []).forEach((assignment) => {
-                const posName = assignment?.pos_name;
-                if (!posName) return;
-                const pct = Number(assignment?.commission_percentage) || 0;
-                map[posName] = (map[posName] || 0) + pct;
-            });
-            setCommissionPctByPos(map);
-        } catch (e) {
-            console.error(e);
-        }
-    }, []);
 
     // Batch: cargar gastos comunes de TODOS los POS en una sola llamada
     const loadCommonGastosBatch = useCallback(async () => {
@@ -286,8 +245,6 @@ export default function BillingWizard() {
                 throw new Error(json.error || json.detalle || 'No se pudo sincronizar el local');
             }
             await Promise.all([
-                loadReportLocales(),
-                loadCommissionConfig(),
                 loadFixedCosts(),
                 loadReportData(),
                 loadCommonGastosBatch(),
@@ -324,8 +281,8 @@ export default function BillingWizard() {
 
     useEffect(() => {
         setLoading(true);
-        Promise.all([loadReportLocales(), loadCommissionConfig(), loadFixedCosts(), loadReportData()]).finally(() => setLoading(false));
-    }, [loadReportLocales, loadCommissionConfig, loadFixedCosts, loadReportData]);
+        Promise.all([loadFixedCosts(), loadReportData()]).finally(() => setLoading(false));
+    }, [loadFixedCosts, loadReportData]);
 
     // Load common gastos (batch) + nomina summary when entering step 2
     useEffect(() => {
@@ -501,9 +458,6 @@ export default function BillingWizard() {
     };
 
     const getCommissionPct = (pos, reportEntry) => {
-        if (Object.prototype.hasOwnProperty.call(commissionPctByPos, pos)) {
-            return commissionPctByPos[pos] || 0;
-        }
         return reportEntry?.comision_porcentaje || 0;
     };
 

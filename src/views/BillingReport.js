@@ -6,6 +6,7 @@ import { formatCLP } from '../formatMoney';
 import { useNotifications } from '../components/Notifications';
 import { openBillingReportIndex } from '../utils/billingReportIndexHtml';
 import { openBillingGastosIndex } from '../utils/billingGastosIndexHtml';
+import { verifyMonthlyPOSSelection } from '../utils/billingSelection';
 
 const esMonths = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -43,6 +44,7 @@ export default function BillingReport() {
             const res = await apiFetch(`/api/billing/monthly?year=${year}&month=${month}`);
             if (!res.ok) throw new Error('Error cargando informe');
             const json = await res.json();
+            verifyMonthlyPOSSelection(json);
             const data = json.data || [];
             if (data.length === 0 || !data.some(e => e.confirmed)) {
                 navigate(`/billing/generate?year=${year}&month=${month}`, { replace: true });
