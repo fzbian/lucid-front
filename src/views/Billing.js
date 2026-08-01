@@ -111,11 +111,21 @@ export default function Billing() {
             if (!res.ok) {
                 throw new Error(json?.error || 'Error cargando los puntos de venta de Odoo');
             }
-            const configs = Array.isArray(json) ? json : [];
+            if (!Array.isArray(json)) {
+                throw new Error('El API devolvió un formato inválido para los puntos de venta de Odoo');
+            }
+            const configs = json;
+            if (requireOdoo && configs.length === 0) {
+                throw new Error('Odoo no devolvió ningún punto de venta; no se abrirá una configuración vacía');
+            }
+            if (requireOdoo && configs.some((cfg) => Number(cfg?.odoo_pos_id) <= 0 || !cfg?.pos_name)) {
+                throw new Error('El API no devolvió los IDs de Odoo. Es necesario desplegar también la versión actualizada del backend');
+            }
             setBillingConfigs(configs);
             return configs;
         } catch (e) {
             console.error(e);
+            if (requireOdoo) throw e;
             return null;
         }
     }, []);
@@ -321,9 +331,6 @@ export default function Billing() {
         setLoadingLocaleConfig(true);
         try {
             const configs = await fetchBillingConfigs(true, true);
-            if (!configs) {
-                throw new Error('No se pudieron actualizar los puntos de venta desde Odoo');
-            }
             const initial = {};
             configs.forEach((cfg) => {
                 if (Number(cfg?.odoo_pos_id) <= 0) return;
