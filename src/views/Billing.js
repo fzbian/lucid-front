@@ -24,6 +24,7 @@ const BILLING_STEP_LABELS = {
 };
 
 const REPORT_POS_NAMES = ['Bodega', 'Medellin', 'Platinum', 'Premium', 'San Fason', 'San Jose', 'Visto', 'Internet'];
+const FRONT_BILLING_CATALOG_VERSION = '2026-07-31-eight-pos-v1';
 
 function sortPosNames(a, b) {
     return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
@@ -31,6 +32,31 @@ function sortPosNames(a, b) {
 
 function posNameKey(value) {
     return String(value || '').trim().toLocaleLowerCase('es');
+}
+
+function analyzeBillingConfigs(configs) {
+    const counts = new Map();
+    (Array.isArray(configs) ? configs : []).forEach((cfg) => {
+        const key = posNameKey(cfg?.pos_name);
+        if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    const expectedKeys = new Set(REPORT_POS_NAMES.map(posNameKey));
+    const missingNames = REPORT_POS_NAMES.filter((name) => !counts.has(posNameKey(name)));
+    const unexpectedNames = (Array.isArray(configs) ? configs : [])
+        .map((cfg) => cfg?.pos_name)
+        .filter((name) => name && !expectedKeys.has(posNameKey(name)));
+    const duplicateNames = REPORT_POS_NAMES.filter((name) => (counts.get(posNameKey(name)) || 0) > 1);
+    const withoutOdooID = (Array.isArray(configs) ? configs : [])
+        .filter((cfg) => cfg?.pos_name && Number(cfg.odoo_pos_id) <= 0)
+        .map((cfg) => cfg.pos_name);
+    return {
+        count: Array.isArray(configs) ? configs.length : 0,
+        missingNames,
+        unexpectedNames,
+        duplicateNames,
+        withoutOdooID,
+        complete: missingNames.length === 0 && unexpectedNames.length === 0 && duplicateNames.length === 0,
+    };
 }
 
 function verifyPersistedSelection(entries, configs) {
@@ -69,6 +95,7 @@ export default function Billing() {
     const [localeDraft, setLocaleDraft] = useState({});
     const [savingLocaleConfig, setSavingLocaleConfig] = useState(false);
     const [loadingLocaleConfig, setLoadingLocaleConfig] = useState(false);
+    const [localeDiagnostics, setLocaleDiagnostics] = useState(null);
     const [syncingPOS, setSyncingPOS] = useState(false);
 
     const fetchBilling = useCallback(async () => {
@@ -213,10 +240,17 @@ export default function Billing() {
     }, [data, billingConfigs, isLocaleIncludedInReports]);
 
     const allLocaleOptions = useMemo(() => {
+        const expectedKeys = new Set(REPORT_POS_NAMES.map(posNameKey));
         return [...billingConfigs]
-            .filter((cfg) => cfg?.pos_name)
+            .filter((cfg) => cfg?.pos_name && expectedKeys.has(posNameKey(cfg.pos_name)))
             .sort((a, b) => sortPosNames(a.pos_name, b.pos_name));
     }, [billingConfigs]);
+
+    const localeCatalogCheck = useMemo(() => analyzeBillingConfigs(billingConfigs), [billingConfigs]);
+    const localeDiagnosticsOperational = localeDiagnostics?.endpoint_ok === true &&
+        localeDiagnostics?.payload?.operational === true &&
+        localeCatalogCheck.complete &&
+        allLocaleOptions.length === REPORT_POS_NAMES.length;
 
     const allKeys = new Set();
     Object.values(filteredData).forEach((posData) => {
@@ -335,21 +369,69 @@ export default function Billing() {
         }
     };
 
-    const openLocaleConfigModal = async () => {
+    const refreshLocaleDiagnostics = async () => {
         if (loadingLocaleConfig) return;
         setLoadingLocaleConfig(true);
+        setLocaleDiagnostics((previous) => ({ ...previous, loading: true, frontend_version: FRONT_BILLING_CATALOG_VERSION }));
         try {
-            const configs = await fetchBillingConfigs(true, true);
+            const res = await apiFetch('/api/billing/configs/diagnostics');
+            const json = await res.json().catch(() => ({}));
+            const diagnosticConfigs = Array.isArray(json?.selection?.configs) ? json.selection.configs : null;
+            let configs = diagnosticConfigs;
+            if (!configs) {
+                configs = await fetchBillingConfigs(true, false);
+            }
+            configs = Array.isArray(configs) ? configs : [];
+            setBillingConfigs(configs);
             const initial = {};
             configs.forEach((cfg) => {
                 initial[posNameKey(cfg.pos_name)] = cfg.include_in_reports !== false;
             });
             setLocaleDraft(initial);
-            setShowLocaleConfig(true);
+            setLocaleDiagnostics({
+                loading: false,
+                frontend_version: FRONT_BILLING_CATALOG_VERSION,
+                endpoint_ok: res.ok,
+                endpoint_status: res.status,
+                payload: json,
+                frontend_validation: analyzeBillingConfigs(configs),
+                error: res.ok ? '' : (json?.error || `El endpoint de diagnóstico respondió HTTP ${res.status}`),
+            });
         } catch (e) {
-            notify({ type: 'error', message: e.message || 'No se pudo abrir la configuración' });
+            const configs = await fetchBillingConfigs(true, false).catch(() => null);
+            if (Array.isArray(configs)) {
+                setBillingConfigs(configs);
+                const initial = {};
+                configs.forEach((cfg) => {
+                    initial[posNameKey(cfg.pos_name)] = cfg.include_in_reports !== false;
+                });
+                setLocaleDraft(initial);
+            }
+            setLocaleDiagnostics({
+                loading: false,
+                frontend_version: FRONT_BILLING_CATALOG_VERSION,
+                endpoint_ok: false,
+                endpoint_status: 0,
+                payload: null,
+                frontend_validation: analyzeBillingConfigs(configs),
+                error: e.message || 'No se pudo ejecutar el diagnóstico',
+            });
         } finally {
             setLoadingLocaleConfig(false);
+        }
+    };
+
+    const openLocaleConfigModal = async () => {
+        setShowLocaleConfig(true);
+        await refreshLocaleDiagnostics();
+    };
+
+    const copyLocaleDiagnostics = async () => {
+        try {
+            await navigator.clipboard.writeText(JSON.stringify(localeDiagnostics, null, 2));
+            notify({ type: 'success', message: 'Diagnóstico copiado.' });
+        } catch (e) {
+            notify({ type: 'error', message: 'No se pudo copiar el diagnóstico.' });
         }
     };
 
@@ -367,8 +449,8 @@ export default function Billing() {
     };
 
     const saveLocaleConfig = async () => {
-        if (allLocaleOptions.length === 0) {
-            setShowLocaleConfig(false);
+        if (!localeDiagnosticsOperational) {
+            notify({ type: 'error', message: 'El diagnóstico no está completo; actualízalo antes de guardar.' });
             return;
         }
         setSavingLocaleConfig(true);
@@ -438,6 +520,22 @@ export default function Billing() {
             ? 'pending_actions'
             : 'summarize';
     const canRestartReport = hasDraftForSelectedMonth && !isResettingSelectedMonth;
+    const diagnosticPayload = localeDiagnostics?.payload || {};
+    const diagnosticOdoo = diagnosticPayload.odoo || {};
+    const diagnosticDatabase = diagnosticPayload.database || {};
+    const diagnosticSelection = diagnosticPayload.selection || {};
+    const diagnosticValidation = localeDiagnostics?.frontend_validation || localeCatalogCheck;
+    const diagnosticHealthy = localeDiagnosticsOperational;
+    const diagnosticStatusLabel = loadingLocaleConfig
+        ? 'Comprobando...'
+        : diagnosticHealthy
+            ? 'Configuración operativa'
+            : 'Revisión requerida';
+    const diagnosticStatusClass = loadingLocaleConfig
+        ? 'text-[var(--text-secondary-color)]'
+        : diagnosticHealthy
+            ? 'text-emerald-400'
+            : 'text-amber-400';
 
     useEffect(() => {
         if (isSelectedMonthConfirmed) {
@@ -790,7 +888,7 @@ export default function Billing() {
 
                 {showLocaleConfig && (
                     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-                        <div className="w-full max-w-2xl bg-[var(--card-color)] border border-[var(--border-color)] rounded-3xl overflow-hidden">
+                        <div className="w-full max-w-2xl max-h-[92vh] bg-[var(--card-color)] border border-[var(--border-color)] rounded-3xl overflow-hidden flex flex-col">
                             <div className="px-5 py-4 border-b border-[var(--border-color)] flex items-center justify-between gap-3">
                                 <div>
                                     <h3 className="text-base font-bold">Configuración de Locales</h3>
@@ -805,6 +903,64 @@ export default function Billing() {
                                 >
                                     <span className="material-symbols-outlined text-sm">close</span>
                                 </button>
+                            </div>
+
+                            <div className="px-5 py-3 border-b border-[var(--border-color)] bg-black/10 space-y-2">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className={`inline-flex items-center gap-1.5 text-xs font-bold ${diagnosticStatusClass}`}>
+                                        <span className={`material-symbols-outlined text-base ${loadingLocaleConfig ? 'animate-spin' : ''}`}>
+                                            {loadingLocaleConfig ? 'progress_activity' : diagnosticHealthy ? 'check_circle' : 'warning'}
+                                        </span>
+                                        {diagnosticStatusLabel}
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            onClick={refreshLocaleDiagnostics}
+                                            disabled={loadingLocaleConfig || savingLocaleConfig}
+                                            title="Actualizar diagnóstico"
+                                            className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center disabled:opacity-50"
+                                        >
+                                            <span className="material-symbols-outlined text-base">refresh</span>
+                                        </button>
+                                        <button
+                                            onClick={copyLocaleDiagnostics}
+                                            disabled={!localeDiagnostics || loadingLocaleConfig}
+                                            title="Copiar diagnóstico"
+                                            className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center disabled:opacity-50"
+                                        >
+                                            <span className="material-symbols-outlined text-base">content_copy</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-1 text-[11px] text-[var(--text-secondary-color)]">
+                                    <div>Frontend: <span className="text-white">{FRONT_BILLING_CATALOG_VERSION}</span></div>
+                                    <div>Backend: <span className="text-white">{diagnosticPayload.catalog_version || 'sin versión'}</span></div>
+                                    <div>API diagnóstico: <span className="text-white">HTTP {localeDiagnostics?.endpoint_status ?? '-'}</span></div>
+                                    <div>Fuente: <span className="text-white">{diagnosticSelection.source || '-'}</span></div>
+                                    <div>Odoo: <span className={diagnosticOdoo.ok ? 'text-emerald-400' : 'text-amber-400'}>{diagnosticOdoo.ok ? `${diagnosticOdoo.count} POS` : 'sin respuesta válida'}</span></div>
+                                    <div>Catálogo resuelto: <span className="text-white">{diagnosticSelection.count ?? diagnosticValidation.count ?? 0} / {REPORT_POS_NAMES.length}</span></div>
+                                    <div>Tabla configuración: <span className={diagnosticDatabase.table_exists ? 'text-emerald-400' : 'text-red-400'}>{diagnosticDatabase.table_exists ? 'disponible' : 'no disponible'}</span></div>
+                                    <div>Columna odoo_pos_id: <span className={diagnosticDatabase.odoo_pos_id_column_exists ? 'text-emerald-400' : 'text-amber-400'}>{diagnosticDatabase.odoo_pos_id_column_exists ? 'disponible' : 'faltante'}</span></div>
+                                </div>
+
+                                {(diagnosticValidation.missingNames?.length > 0 || diagnosticValidation.unexpectedNames?.length > 0 || diagnosticValidation.duplicateNames?.length > 0) && (
+                                    <div className="text-[11px] text-red-300 break-words">
+                                        {diagnosticValidation.missingNames?.length > 0 && `Faltan: ${diagnosticValidation.missingNames.join(', ')}. `}
+                                        {diagnosticValidation.unexpectedNames?.length > 0 && `Inesperados: ${diagnosticValidation.unexpectedNames.join(', ')}. `}
+                                        {diagnosticValidation.duplicateNames?.length > 0 && `Duplicados: ${diagnosticValidation.duplicateNames.join(', ')}.`}
+                                    </div>
+                                )}
+                                {diagnosticValidation.withoutOdooID?.length > 0 && (
+                                    <div className="text-[11px] text-amber-300 break-words">
+                                        Sin ID sincronizado: {diagnosticValidation.withoutOdooID.join(', ')}.
+                                    </div>
+                                )}
+                                {(localeDiagnostics?.error || diagnosticOdoo.error || diagnosticDatabase.error || diagnosticSelection.error) && (
+                                    <div className="text-[11px] text-red-300 break-words max-h-20 overflow-y-auto">
+                                        {[localeDiagnostics?.error, diagnosticOdoo.error, diagnosticDatabase.error, diagnosticSelection.error].filter(Boolean).join(' | ')}
+                                    </div>
+                                )}
                             </div>
 
                             <div className="px-5 py-3 border-b border-[var(--border-color)] flex items-center justify-between gap-2 text-xs">
@@ -829,7 +985,7 @@ export default function Billing() {
                                 </div>
                             </div>
 
-                            <div className="max-h-[52vh] overflow-y-auto px-5 py-3 space-y-2">
+                            <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-2">
                                 {allLocaleOptions.length === 0 && (
                                     <div className="text-sm text-[var(--text-secondary-color)] italic py-6 text-center">
                                         No hay locales de Odoo disponibles para configurar.
@@ -867,7 +1023,7 @@ export default function Billing() {
                                 </button>
                                 <button
                                     onClick={saveLocaleConfig}
-                                    disabled={savingLocaleConfig}
+                                    disabled={savingLocaleConfig || loadingLocaleConfig || !localeDiagnosticsOperational}
                                     className="px-4 py-2 rounded-xl bg-[var(--primary-color)] text-sm font-bold transition-colors hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
                                 >
                                     <span className="material-symbols-outlined text-sm">{savingLocaleConfig ? 'hourglass_empty' : 'save'}</span>
