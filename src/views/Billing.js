@@ -24,7 +24,7 @@ const BILLING_STEP_LABELS = {
 };
 
 const REPORT_POS_NAMES = ['Bodega', 'Medellin', 'Platinum', 'Premium', 'San Fason', 'San Jose', 'Visto', 'Internet'];
-const FRONT_BILLING_CATALOG_VERSION = '2026-07-31-eight-pos-v1';
+const FRONT_BILLING_CATALOG_VERSION = '2026-08-01-internet-compat-v2';
 
 function sortPosNames(a, b) {
     return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
@@ -55,8 +55,20 @@ function analyzeBillingConfigs(configs) {
         unexpectedNames,
         duplicateNames,
         withoutOdooID,
-        complete: missingNames.length === 0 && unexpectedNames.length === 0 && duplicateNames.length === 0,
+        complete: missingNames.length === 0 && duplicateNames.length === 0,
+        exact: missingNames.length === 0 && unexpectedNames.length === 0 && duplicateNames.length === 0,
     };
+}
+
+function buildLocaleDraft(configs) {
+    const draft = {};
+    const expectedKeys = new Set(REPORT_POS_NAMES.map(posNameKey));
+    (Array.isArray(configs) ? configs : []).forEach((cfg) => {
+        const key = posNameKey(cfg?.pos_name);
+        if (!key) return;
+        draft[key] = expectedKeys.has(key) && (key === posNameKey('Internet') || cfg.include_in_reports !== false);
+    });
+    return draft;
 }
 
 function verifyPersistedSelection(entries, configs) {
@@ -247,10 +259,14 @@ export default function Billing() {
     }, [billingConfigs]);
 
     const localeCatalogCheck = useMemo(() => analyzeBillingConfigs(billingConfigs), [billingConfigs]);
-    const localeDiagnosticsOperational = localeDiagnostics?.endpoint_ok === true &&
+    const legacyBackendCompatibility = localeDiagnostics?.endpoint_status === 404 &&
+        localeCatalogCheck.complete &&
+        localeCatalogCheck.withoutOdooID.length === 0 &&
+        allLocaleOptions.length === REPORT_POS_NAMES.length;
+    const localeDiagnosticsOperational = (localeDiagnostics?.endpoint_ok === true &&
         localeDiagnostics?.payload?.operational === true &&
         localeCatalogCheck.complete &&
-        allLocaleOptions.length === REPORT_POS_NAMES.length;
+        allLocaleOptions.length === REPORT_POS_NAMES.length) || legacyBackendCompatibility;
 
     const allKeys = new Set();
     Object.values(filteredData).forEach((posData) => {
@@ -369,6 +385,47 @@ export default function Billing() {
         }
     };
 
+    const probeBillingPipeline = async () => {
+        const readJSON = async (url) => {
+            try {
+                const res = await apiFetch(url);
+                const json = await res.json().catch(() => null);
+                return { ok: res.ok, status: res.status, json, error: res.ok ? '' : (json?.error || `HTTP ${res.status}`) };
+            } catch (error) {
+                return { ok: false, status: 0, json: null, error: error.message || 'Error de conexión' };
+            }
+        };
+
+        const [billingResult, monthlyResult] = await Promise.all([
+            readJSON(`/api/odoo/billing?year=${year}`),
+            readJSON(`/api/billing/monthly?year=${year}&month=${monthNumber}`),
+        ]);
+        const billingNames = billingResult.json && typeof billingResult.json === 'object' && !Array.isArray(billingResult.json)
+            ? Object.keys(billingResult.json)
+            : [];
+        const monthlyRows = Array.isArray(monthlyResult.json?.data) ? monthlyResult.json.data : [];
+        const monthlyNames = Array.isArray(monthlyResult.json?.selected_pos_names)
+            ? monthlyResult.json.selected_pos_names
+            : monthlyRows.map((row) => row?.pos_name).filter(Boolean);
+
+        return {
+            billing: {
+                ok: billingResult.ok,
+                status: billingResult.status,
+                names: billingNames,
+                has_internet: billingNames.some((name) => posNameKey(name) === posNameKey('Internet')),
+                error: billingResult.error,
+            },
+            monthly: {
+                ok: monthlyResult.ok,
+                status: monthlyResult.status,
+                names: monthlyNames,
+                has_internet: monthlyNames.some((name) => posNameKey(name) === posNameKey('Internet')),
+                error: monthlyResult.error,
+            },
+        };
+    };
+
     const refreshLocaleDiagnostics = async () => {
         if (loadingLocaleConfig) return;
         setLoadingLocaleConfig(true);
@@ -383,11 +440,8 @@ export default function Billing() {
             }
             configs = Array.isArray(configs) ? configs : [];
             setBillingConfigs(configs);
-            const initial = {};
-            configs.forEach((cfg) => {
-                initial[posNameKey(cfg.pos_name)] = cfg.include_in_reports !== false;
-            });
-            setLocaleDraft(initial);
+            setLocaleDraft(buildLocaleDraft(configs));
+            const pipeline = await probeBillingPipeline();
             setLocaleDiagnostics({
                 loading: false,
                 frontend_version: FRONT_BILLING_CATALOG_VERSION,
@@ -395,18 +449,16 @@ export default function Billing() {
                 endpoint_status: res.status,
                 payload: json,
                 frontend_validation: analyzeBillingConfigs(configs),
+                pipeline,
                 error: res.ok ? '' : (json?.error || `El endpoint de diagnóstico respondió HTTP ${res.status}`),
             });
         } catch (e) {
             const configs = await fetchBillingConfigs(true, false).catch(() => null);
             if (Array.isArray(configs)) {
                 setBillingConfigs(configs);
-                const initial = {};
-                configs.forEach((cfg) => {
-                    initial[posNameKey(cfg.pos_name)] = cfg.include_in_reports !== false;
-                });
-                setLocaleDraft(initial);
+                setLocaleDraft(buildLocaleDraft(configs));
             }
+            const pipeline = await probeBillingPipeline();
             setLocaleDiagnostics({
                 loading: false,
                 frontend_version: FRONT_BILLING_CATALOG_VERSION,
@@ -414,6 +466,7 @@ export default function Billing() {
                 endpoint_status: 0,
                 payload: null,
                 frontend_validation: analyzeBillingConfigs(configs),
+                pipeline,
                 error: e.message || 'No se pudo ejecutar el diagnóstico',
             });
         } finally {
@@ -453,15 +506,22 @@ export default function Billing() {
             notify({ type: 'error', message: 'El diagnóstico no está completo; actualízalo antes de guardar.' });
             return;
         }
+        if (localeDraft[posNameKey('Internet')] !== true) {
+            notify({ type: 'error', message: 'Internet debe estar seleccionado para aparecer en todos los informes.' });
+            return;
+        }
         setSavingLocaleConfig(true);
         try {
-            const entries = allLocaleOptions.map((cfg) => {
+            const expectedKeys = new Set(REPORT_POS_NAMES.map(posNameKey));
+            const saveOptions = legacyBackendCompatibility ? billingConfigs : allLocaleOptions;
+            const entries = saveOptions.map((cfg) => {
                 const nameKey = posNameKey(cfg.pos_name);
                 const odooPOSID = Number(cfg.odoo_pos_id);
+                const isReportPOS = expectedKeys.has(nameKey);
                 return {
                     odoo_pos_id: odooPOSID > 0 ? odooPOSID : null,
                     pos_name: cfg.pos_name,
-                    include_in_reports: localeDraft[nameKey] !== false,
+                    include_in_reports: isReportPOS && localeDraft[nameKey] !== false,
                     arriendo: Number(cfg.arriendo) || 0,
                     internet: Number(cfg.internet) || 0,
                     luz: Number(cfg.luz) || 0,
@@ -494,13 +554,21 @@ export default function Billing() {
             if (JSON.stringify(expectedSelectedNames) !== JSON.stringify(returnedSelectedNames)) {
                 throw new Error('La lista seleccionada no coincide con la confirmación del servidor');
             }
+            if (!returnedSelectedNames.includes(posNameKey('Internet'))) {
+                throw new Error('El servidor guardó la configuración pero no incluyó Internet');
+            }
 
             const finalConfigs = await fetchBillingConfigs(true, true);
             if (!finalConfigs) throw new Error('No se pudo realizar la verificación final contra Odoo');
             verifyPersistedSelection(entries, finalConfigs);
+            const pipeline = await probeBillingPipeline();
+            if (!pipeline.billing.has_internet || !pipeline.monthly.has_internet) {
+                setLocaleDiagnostics((previous) => ({ ...previous, pipeline }));
+                throw new Error('Internet se guardó, pero todavía no aparece en facturación o en el informe mensual. Copia el diagnóstico actualizado.');
+            }
             await fetchBilling();
             setShowLocaleConfig(false);
-            notify({ type: 'success', message: 'Locales para informes actualizados.' });
+            notify({ type: 'success', message: 'Configuración guardada. Internet verificado en facturación e informes.' });
         } catch (e) {
             notify({ type: 'error', message: e.message || 'No se pudo guardar la configuración' });
         } finally {
@@ -525,14 +593,21 @@ export default function Billing() {
     const diagnosticDatabase = diagnosticPayload.database || {};
     const diagnosticSelection = diagnosticPayload.selection || {};
     const diagnosticValidation = localeDiagnostics?.frontend_validation || localeCatalogCheck;
+    const diagnosticPipeline = localeDiagnostics?.pipeline || {};
+    const diagnosticInternetAvailable = allLocaleOptions.some((cfg) => posNameKey(cfg.pos_name) === posNameKey('Internet'));
+    const diagnosticInternetSelected = localeDraft[posNameKey('Internet')] === true;
     const diagnosticHealthy = localeDiagnosticsOperational;
     const diagnosticStatusLabel = loadingLocaleConfig
         ? 'Comprobando...'
+        : legacyBackendCompatibility
+            ? 'Backend anterior: compatibilidad activa'
         : diagnosticHealthy
             ? 'Configuración operativa'
             : 'Revisión requerida';
     const diagnosticStatusClass = loadingLocaleConfig
         ? 'text-[var(--text-secondary-color)]'
+        : legacyBackendCompatibility
+            ? 'text-amber-400'
         : diagnosticHealthy
             ? 'text-emerald-400'
             : 'text-amber-400';
@@ -909,7 +984,7 @@ export default function Billing() {
                                 <div className="flex items-center justify-between gap-3">
                                     <div className={`inline-flex items-center gap-1.5 text-xs font-bold ${diagnosticStatusClass}`}>
                                         <span className={`material-symbols-outlined text-base ${loadingLocaleConfig ? 'animate-spin' : ''}`}>
-                                            {loadingLocaleConfig ? 'progress_activity' : diagnosticHealthy ? 'check_circle' : 'warning'}
+                                            {loadingLocaleConfig ? 'progress_activity' : legacyBackendCompatibility ? 'sync_problem' : diagnosticHealthy ? 'check_circle' : 'warning'}
                                         </span>
                                         {diagnosticStatusLabel}
                                     </div>
@@ -938,17 +1013,26 @@ export default function Billing() {
                                     <div>Backend: <span className="text-white">{diagnosticPayload.catalog_version || 'sin versión'}</span></div>
                                     <div>API diagnóstico: <span className="text-white">HTTP {localeDiagnostics?.endpoint_status ?? '-'}</span></div>
                                     <div>Fuente: <span className="text-white">{diagnosticSelection.source || '-'}</span></div>
-                                    <div>Odoo: <span className={diagnosticOdoo.ok ? 'text-emerald-400' : 'text-amber-400'}>{diagnosticOdoo.ok ? `${diagnosticOdoo.count} POS` : 'sin respuesta válida'}</span></div>
-                                    <div>Catálogo resuelto: <span className="text-white">{diagnosticSelection.count ?? diagnosticValidation.count ?? 0} / {REPORT_POS_NAMES.length}</span></div>
-                                    <div>Tabla configuración: <span className={diagnosticDatabase.table_exists ? 'text-emerald-400' : 'text-red-400'}>{diagnosticDatabase.table_exists ? 'disponible' : 'no disponible'}</span></div>
-                                    <div>Columna odoo_pos_id: <span className={diagnosticDatabase.odoo_pos_id_column_exists ? 'text-emerald-400' : 'text-amber-400'}>{diagnosticDatabase.odoo_pos_id_column_exists ? 'disponible' : 'faltante'}</span></div>
+                                    <div>POS recibidos: <span className="text-white">{diagnosticValidation.count ?? 0}</span></div>
+                                    <div>Catálogo requerido: <span className={localeCatalogCheck.complete ? 'text-emerald-400' : 'text-red-400'}>{allLocaleOptions.length} / {REPORT_POS_NAMES.length}</span></div>
+                                    <div>Internet disponible: <span className={diagnosticInternetAvailable ? 'text-emerald-400' : 'text-red-400'}>{diagnosticInternetAvailable ? 'sí' : 'no'}</span></div>
+                                    <div>Internet seleccionado: <span className={diagnosticInternetSelected ? 'text-emerald-400' : 'text-red-400'}>{diagnosticInternetSelected ? 'sí' : 'no'}</span></div>
+                                    <div>Facturación: <span className={diagnosticPipeline.billing?.has_internet ? 'text-emerald-400' : 'text-amber-400'}>HTTP {diagnosticPipeline.billing?.status ?? '-'} · Internet {diagnosticPipeline.billing?.has_internet ? 'sí' : 'no'}</span></div>
+                                    <div>Informe mensual: <span className={diagnosticPipeline.monthly?.has_internet ? 'text-emerald-400' : 'text-amber-400'}>HTTP {diagnosticPipeline.monthly?.status ?? '-'} · Internet {diagnosticPipeline.monthly?.has_internet ? 'sí' : 'no'}</span></div>
+                                    <div>Odoo directo: <span className={diagnosticOdoo.ok ? 'text-emerald-400' : 'text-amber-400'}>{diagnosticOdoo.ok ? `${diagnosticOdoo.count} POS` : legacyBackendCompatibility ? 'no comprobable en backend anterior' : 'sin respuesta válida'}</span></div>
+                                    <div>Tabla configuración: <span className={diagnosticDatabase.table_exists ? 'text-emerald-400' : 'text-amber-400'}>{diagnosticDatabase.table_exists ? 'disponible' : legacyBackendCompatibility ? 'no comprobable' : 'no disponible'}</span></div>
+                                    <div>Columna odoo_pos_id: <span className={diagnosticDatabase.odoo_pos_id_column_exists ? 'text-emerald-400' : 'text-amber-400'}>{diagnosticDatabase.odoo_pos_id_column_exists ? 'disponible' : legacyBackendCompatibility ? 'no comprobable' : 'faltante'}</span></div>
                                 </div>
 
-                                {(diagnosticValidation.missingNames?.length > 0 || diagnosticValidation.unexpectedNames?.length > 0 || diagnosticValidation.duplicateNames?.length > 0) && (
+                                {(diagnosticValidation.missingNames?.length > 0 || diagnosticValidation.duplicateNames?.length > 0) && (
                                     <div className="text-[11px] text-red-300 break-words">
                                         {diagnosticValidation.missingNames?.length > 0 && `Faltan: ${diagnosticValidation.missingNames.join(', ')}. `}
-                                        {diagnosticValidation.unexpectedNames?.length > 0 && `Inesperados: ${diagnosticValidation.unexpectedNames.join(', ')}. `}
                                         {diagnosticValidation.duplicateNames?.length > 0 && `Duplicados: ${diagnosticValidation.duplicateNames.join(', ')}.`}
+                                    </div>
+                                )}
+                                {diagnosticValidation.unexpectedNames?.length > 0 && (
+                                    <div className="text-[11px] text-amber-300 break-words">
+                                        Excluidos automáticamente de los informes: {diagnosticValidation.unexpectedNames.join(', ')}.
                                     </div>
                                 )}
                                 {diagnosticValidation.withoutOdooID?.length > 0 && (
@@ -957,8 +1041,13 @@ export default function Billing() {
                                     </div>
                                 )}
                                 {(localeDiagnostics?.error || diagnosticOdoo.error || diagnosticDatabase.error || diagnosticSelection.error) && (
-                                    <div className="text-[11px] text-red-300 break-words max-h-20 overflow-y-auto">
+                                    <div className={`text-[11px] break-words max-h-20 overflow-y-auto ${legacyBackendCompatibility ? 'text-amber-300' : 'text-red-300'}`}>
                                         {[localeDiagnostics?.error, diagnosticOdoo.error, diagnosticDatabase.error, diagnosticSelection.error].filter(Boolean).join(' | ')}
+                                    </div>
+                                )}
+                                {(diagnosticPipeline.billing?.error || diagnosticPipeline.monthly?.error) && (
+                                    <div className="text-[11px] text-red-300 break-words max-h-20 overflow-y-auto">
+                                        {[diagnosticPipeline.billing?.error, diagnosticPipeline.monthly?.error].filter(Boolean).join(' | ')}
                                     </div>
                                 )}
                             </div>
