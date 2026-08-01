@@ -23,6 +23,8 @@ const BILLING_STEP_LABELS = {
     4: 'Confirmar',
 };
 
+const REPORT_POS_NAMES = ['Bodega', 'Medellin', 'Platinum', 'Premium', 'San Fason', 'San Jose', 'Visto', 'Internet'];
+
 function sortPosNames(a, b) {
     return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
 }
@@ -32,14 +34,14 @@ function posNameKey(value) {
 }
 
 function verifyPersistedSelection(entries, configs) {
-    const persistedByID = new Map(
-        (Array.isArray(configs) ? configs : []).map((cfg) => [Number(cfg.odoo_pos_id), cfg])
+    const persistedByName = new Map(
+        (Array.isArray(configs) ? configs : []).map((cfg) => [posNameKey(cfg.pos_name), cfg])
     );
-    if (persistedByID.size !== entries.length) {
+    if (persistedByName.size !== entries.length) {
         throw new Error('La verificación devolvió una cantidad distinta de puntos de venta');
     }
     const mismatches = entries.filter((entry) => {
-        const persisted = persistedByID.get(Number(entry.odoo_pos_id));
+        const persisted = persistedByName.get(posNameKey(entry.pos_name));
         return !persisted || (persisted.include_in_reports !== false) !== entry.include_in_reports;
     });
     if (mismatches.length > 0) {
@@ -118,8 +120,15 @@ export default function Billing() {
             if (requireOdoo && configs.length === 0) {
                 throw new Error('Odoo no devolvió ningún punto de venta; no se abrirá una configuración vacía');
             }
-            if (requireOdoo && configs.some((cfg) => Number(cfg?.odoo_pos_id) <= 0 || !cfg?.pos_name)) {
-                throw new Error('El API no devolvió los IDs de Odoo. Es necesario desplegar también la versión actualizada del backend');
+            if (requireOdoo && configs.some((cfg) => !cfg?.pos_name)) {
+                throw new Error('El API devolvió un punto de venta sin nombre');
+            }
+            if (requireOdoo) {
+                const availableNames = new Set(configs.map((cfg) => posNameKey(cfg.pos_name)));
+                const missingNames = REPORT_POS_NAMES.filter((name) => !availableNames.has(posNameKey(name)));
+                if (missingNames.length > 0) {
+                    throw new Error(`El catálogo de informes está incompleto. Faltan: ${missingNames.join(', ')}`);
+                }
             }
             setBillingConfigs(configs);
             return configs;
@@ -205,7 +214,7 @@ export default function Billing() {
 
     const allLocaleOptions = useMemo(() => {
         return [...billingConfigs]
-            .filter((cfg) => Number(cfg?.odoo_pos_id) > 0 && cfg?.pos_name)
+            .filter((cfg) => cfg?.pos_name)
             .sort((a, b) => sortPosNames(a.pos_name, b.pos_name));
     }, [billingConfigs]);
 
@@ -333,8 +342,7 @@ export default function Billing() {
             const configs = await fetchBillingConfigs(true, true);
             const initial = {};
             configs.forEach((cfg) => {
-                if (Number(cfg?.odoo_pos_id) <= 0) return;
-                initial[String(cfg.odoo_pos_id)] = cfg.include_in_reports !== false;
+                initial[posNameKey(cfg.pos_name)] = cfg.include_in_reports !== false;
             });
             setLocaleDraft(initial);
             setShowLocaleConfig(true);
@@ -345,15 +353,15 @@ export default function Billing() {
         }
     };
 
-    const toggleLocaleDraft = (odooPOSID) => {
-        const key = String(odooPOSID);
+    const toggleLocaleDraft = (posName) => {
+        const key = posNameKey(posName);
         setLocaleDraft((prev) => ({ ...prev, [key]: !prev[key] }));
     };
 
     const setAllLocaleDraft = (included) => {
         const next = {};
         allLocaleOptions.forEach((cfg) => {
-            next[String(cfg.odoo_pos_id)] = included;
+            next[posNameKey(cfg.pos_name)] = included;
         });
         setLocaleDraft(next);
     };
@@ -366,11 +374,12 @@ export default function Billing() {
         setSavingLocaleConfig(true);
         try {
             const entries = allLocaleOptions.map((cfg) => {
-                const idKey = String(cfg.odoo_pos_id);
+                const nameKey = posNameKey(cfg.pos_name);
+                const odooPOSID = Number(cfg.odoo_pos_id);
                 return {
-                    odoo_pos_id: Number(cfg.odoo_pos_id),
+                    odoo_pos_id: odooPOSID > 0 ? odooPOSID : null,
                     pos_name: cfg.pos_name,
-                    include_in_reports: localeDraft[idKey] !== false,
+                    include_in_reports: localeDraft[nameKey] !== false,
                     arriendo: Number(cfg.arriendo) || 0,
                     internet: Number(cfg.internet) || 0,
                     luz: Number(cfg.luz) || 0,
@@ -398,9 +407,9 @@ export default function Billing() {
             }
             verifyPersistedSelection(entries, json.configs);
 
-            const expectedSelectedIDs = entries.filter((entry) => entry.include_in_reports).map((entry) => entry.odoo_pos_id).sort((a, b) => a - b);
-            const returnedSelectedIDs = (Array.isArray(json.selected_pos_ids) ? json.selected_pos_ids : []).map(Number).sort((a, b) => a - b);
-            if (JSON.stringify(expectedSelectedIDs) !== JSON.stringify(returnedSelectedIDs)) {
+            const expectedSelectedNames = entries.filter((entry) => entry.include_in_reports).map((entry) => posNameKey(entry.pos_name)).sort();
+            const returnedSelectedNames = (Array.isArray(json.selected_pos_names) ? json.selected_pos_names : []).map(posNameKey).sort();
+            if (JSON.stringify(expectedSelectedNames) !== JSON.stringify(returnedSelectedNames)) {
                 throw new Error('La lista seleccionada no coincide con la confirmación del servidor');
             }
 
@@ -827,12 +836,12 @@ export default function Billing() {
                                     </div>
                                 )}
                                 {allLocaleOptions.map((cfg) => {
-                                    const idKey = String(cfg.odoo_pos_id);
-                                    const included = localeDraft[idKey] !== false;
+                                    const nameKey = posNameKey(cfg.pos_name);
+                                    const included = localeDraft[nameKey] !== false;
                                     return (
                                         <button
-                                            key={idKey}
-                                            onClick={() => toggleLocaleDraft(cfg.odoo_pos_id)}
+                                            key={nameKey}
+                                            onClick={() => toggleLocaleDraft(cfg.pos_name)}
                                             disabled={savingLocaleConfig}
                                             className={`w-full px-3 py-2.5 rounded-xl border transition-colors flex items-center justify-between text-left ${included
                                                 ? 'border-[var(--primary-color)]/30 bg-[var(--primary-color)]/10'
