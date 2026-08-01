@@ -27,6 +27,10 @@ function sortPosNames(a, b) {
     return String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base' });
 }
 
+function posNameKey(value) {
+    return String(value || '').trim().toLocaleLowerCase('es');
+}
+
 export default function Billing() {
     const { notify } = useNotifications();
     const navigate = useNavigate();
@@ -82,12 +86,16 @@ export default function Billing() {
     const fetchBillingConfigs = useCallback(async () => {
         try {
             const res = await apiFetch('/api/billing/configs');
-            if (res.ok) {
-                const json = await res.json();
-                setBillingConfigs(Array.isArray(json) ? json : []);
+            const json = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error(json?.error || 'Error cargando los puntos de venta de Odoo');
             }
+            const configs = Array.isArray(json) ? json : [];
+            setBillingConfigs(configs);
+            return configs;
         } catch (e) {
             console.error(e);
+            return null;
         }
     }, []);
 
@@ -164,9 +172,8 @@ export default function Billing() {
     }, [data, billingConfigMap, isLocaleIncludedInReports]);
 
     const allLocaleOptions = useMemo(() => {
-        const set = new Set([...Object.keys(data), ...Object.keys(billingConfigMap)]);
-        return Array.from(set).sort(sortPosNames);
-    }, [data, billingConfigMap]);
+        return Object.keys(billingConfigMap).sort(sortPosNames);
+    }, [billingConfigMap]);
 
     const allKeys = new Set();
     Object.values(filteredData).forEach((posData) => {
@@ -334,11 +341,30 @@ export default function Billing() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ entries }),
             });
+            const json = await res.json().catch(() => ({}));
             if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error || 'Error guardando configuración de locales');
+                const invalidNames = Array.isArray(json.pos_names) && json.pos_names.length > 0
+                    ? `: ${json.pos_names.join(', ')}`
+                    : '';
+                throw new Error(`${json.error || 'Error guardando configuración de locales'}${invalidNames}`);
             }
-            await fetchBillingConfigs();
+
+            if (Array.isArray(json.configs)) {
+                setBillingConfigs(json.configs);
+                const persistedByKey = new Map(json.configs.map((cfg) => [posNameKey(cfg.pos_name), cfg]));
+                const notPersisted = entries.filter((entry) => {
+                    const persisted = persistedByKey.get(posNameKey(entry.pos_name));
+                    return !persisted || (persisted.include_in_reports !== false) !== entry.include_in_reports;
+                });
+                if (notPersisted.length > 0) {
+                    throw new Error(`No se confirmó la configuración de: ${notPersisted.map((entry) => entry.pos_name).join(', ')}`);
+                }
+            } else {
+                const refreshedConfigs = await fetchBillingConfigs();
+                if (!refreshedConfigs) {
+                    throw new Error('La configuración se guardó, pero no se pudo verificar su estado');
+                }
+            }
             await fetchBilling();
             setShowLocaleConfig(false);
             notify({ type: 'success', message: 'Locales para informes actualizados.' });
