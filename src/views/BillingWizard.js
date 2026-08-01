@@ -95,6 +95,7 @@ export default function BillingWizard() {
     // All POS names
     const allPosNames = [...new Set([
         ...Object.keys(fixedCostsByPos),
+        ...Object.keys(reportLocaleMap),
         ...reportData.map(e => e.pos_name),
     ])].filter(isPosIncludedInReports).sort(sortPosNames);
 

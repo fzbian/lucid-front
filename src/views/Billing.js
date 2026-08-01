@@ -152,10 +152,16 @@ export default function Billing() {
     }, [billingConfigMap]);
 
     const filteredData = useMemo(() => {
-        return Object.fromEntries(
+        const next = Object.fromEntries(
             Object.entries(data).filter(([pos]) => isLocaleIncludedInReports(pos))
         );
-    }, [data, isLocaleIncludedInReports]);
+        Object.keys(billingConfigMap).forEach((pos) => {
+            if (isLocaleIncludedInReports(pos) && !next[pos]) {
+                next[pos] = {};
+            }
+        });
+        return next;
+    }, [data, billingConfigMap, isLocaleIncludedInReports]);
 
     const allLocaleOptions = useMemo(() => {
         const set = new Set([...Object.keys(data), ...Object.keys(billingConfigMap)]);
@@ -333,6 +339,7 @@ export default function Billing() {
                 throw new Error(err.error || 'Error guardando configuración de locales');
             }
             await fetchBillingConfigs();
+            await fetchBilling();
             setShowLocaleConfig(false);
             notify({ type: 'success', message: 'Locales para informes actualizados.' });
         } catch (e) {
@@ -745,7 +752,7 @@ export default function Billing() {
                             <div className="max-h-[52vh] overflow-y-auto px-5 py-3 space-y-2">
                                 {allLocaleOptions.length === 0 && (
                                     <div className="text-sm text-[var(--text-secondary-color)] italic py-6 text-center">
-                                        No hay locales disponibles para configurar.
+                                        No hay locales de Odoo disponibles para configurar.
                                     </div>
                                 )}
                                 {allLocaleOptions.map((pos) => {
