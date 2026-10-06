@@ -8,20 +8,7 @@ import { getSession, getUsers, getSessionUsername } from "../auth";
 import useTitle from "../useTitle";
 import { formatDateTimeCO } from "../dateFormat";
 import useTimeout from "../useTimeout";
-
-function sortLocalesByName(a, b) {
-  return String(a?.[0] || '').localeCompare(String(b?.[0] || ''), 'es', { sensitivity: 'base' });
-}
-
-const DASHBOARD_ALLOWED_LOCALE_NAMES = ['Visto', 'Titanium', 'San Jose', 'Premium', 'Platinum', 'Medellin', 'San Fason'];
-
-function isDashboardLocale(name) {
-  const safe = String(name || '').trim().toLowerCase();
-  return DASHBOARD_ALLOWED_LOCALE_NAMES.some((allowed) => {
-    const base = allowed.toLowerCase();
-    return safe === base || safe.startsWith(`${base} `) || safe.startsWith(`${base}(`);
-  });
-}
+import { DASHBOARD_LOCALE_NAMES, isDashboardLocale, sortDashboardLocaleEntries } from "../dashboardLocales";
 
 // Helper para agrupar movimientos por fecha (Hoy, Ayer, fecha completa)
 function groupTransactionsByDate(movs) {
@@ -72,7 +59,7 @@ export default function Dashboard() {
   // Derivados de caja para locales (se recalculan en render)
   const localesList = useMemo(
     () => (caja?.locales
-      ? Object.entries(caja.locales).filter(([nombre]) => isDashboardLocale(nombre)).sort(sortLocalesByName)
+      ? Object.entries(caja.locales).filter(([nombre]) => isDashboardLocale(nombre)).sort(sortDashboardLocaleEntries)
       : []),
     [caja]
   );
@@ -414,7 +401,7 @@ export default function Dashboard() {
           ) : localesList.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[var(--border-color)] bg-[var(--dark-color)]/40 px-4 py-6 text-center">
               <p className="text-sm font-medium">No hay locales disponibles para esta vista.</p>
-              <p className="mt-1 text-xs text-[var(--text-secondary-color)]">Solo se muestran: Visto, Titanium, San Jose, Premium, Platinum, Medellin y San Fason.</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary-color)]">Solo se muestran: {DASHBOARD_LOCALE_NAMES.join(', ')}.</p>
             </div>
           ) : (
             <div className="space-y-3">
