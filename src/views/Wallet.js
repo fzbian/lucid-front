@@ -206,7 +206,7 @@ export default function Wallet() {
         throw new Error("Este cliente no tiene facturas para incluir en el estado de cuenta.");
       }
 
-      const { blob, base64, fileName } = await generateCarteraAccountStatementPdf(client, invoices);
+      const { blob, base64, fileName, invoicesCount } = await generateCarteraAccountStatementPdf(client, invoices);
       const url = URL.createObjectURL(blob);
       setPdfPreview((prev) => {
         if (prev?.url?.startsWith("blob:")) {
@@ -214,12 +214,12 @@ export default function Wallet() {
         }
         return {
           client,
-          invoicesCount: invoices.length,
+          invoicesCount,
           url,
           base64,
           fileName,
           title: "Previsualización del estado de cuenta",
-          subtitle: `${client.nombre} · WhatsApp ${client.celular || "sin número"} · ${invoices.length} factura(s)`,
+          subtitle: `${client.nombre} · WhatsApp ${client.celular || "sin número"} · ${invoicesCount} factura(s) con saldo pendiente`,
         };
       });
     } catch (err) {

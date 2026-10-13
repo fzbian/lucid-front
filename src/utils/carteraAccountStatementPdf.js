@@ -148,7 +148,8 @@ function blobToBase64(blob) {
 }
 
 export async function generateCarteraAccountStatementPdf(client, invoices) {
-  const rows = Array.isArray(invoices) ? invoices : [];
+  const rows = (Array.isArray(invoices) ? invoices : [])
+    .filter((invoice) => Number(invoice?.valor_pendiente || 0) > 0);
   const summary = buildSummary(rows);
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const margin = 40;
@@ -172,7 +173,7 @@ export async function generateCarteraAccountStatementPdf(client, invoices) {
   doc.setFontSize(11);
   doc.text((client?.nombre || 'Cliente').toUpperCase(), pageWidth - margin - 18, 62, { align: 'right' });
   doc.setTextColor(191, 219, 254);
-  doc.text('Resumen actual de cartera', pageWidth - margin - 18, 82, { align: 'right' });
+  doc.text('Facturas con saldo pendiente', pageWidth - margin - 18, 82, { align: 'right' });
   doc.setTextColor(226, 232, 240);
   doc.text(`${summary.facturas} factura(s)`, pageWidth - margin - 18, 102, { align: 'right' });
 
@@ -203,10 +204,10 @@ export async function generateCarteraAccountStatementPdf(client, invoices) {
   doc.setTextColor(71, 85, 105);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.text('Detalle por factura', margin, 230);
+  doc.text('Detalle de facturas pendientes', margin, 230);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.text('Cada factura muestra primero su concepto general y debajo las líneas cobradas.', margin, 244);
+  doc.text('Solo se incluyen facturas con saldo pendiente y sus abonos aplicados.', margin, 244);
 
   autoTable(doc, {
     startY: 260,
@@ -247,7 +248,7 @@ export async function generateCarteraAccountStatementPdf(client, invoices) {
       'Subtotal / saldo',
     ]],
     body: invoiceRows.length > 0 ? invoiceRows : [[
-      'No hay líneas registradas',
+      'No hay facturas con saldo pendiente',
       '—',
       '—',
       '—',
@@ -264,5 +265,5 @@ export async function generateCarteraAccountStatementPdf(client, invoices) {
   const blob = doc.output('blob');
   const base64 = await blobToBase64(blob);
 
-  return { blob, base64, fileName };
+  return { blob, base64, fileName, invoicesCount: rows.length };
 }
